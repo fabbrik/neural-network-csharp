@@ -14,13 +14,56 @@ backpropagation, which is the one concept everything else depends on.
 | [`Activations.cs`](src/NN/Activations.cs) | `IActivation` and the activation functions |
 | [`Perceptron.cs`](src/NN/Perceptron.cs) | The 1958 single-unit perceptron and its update rule |
 | [`Dense.cs`](src/NN/Dense.cs) | The dense (fully connected) layer: forward, backward, gradient step |
-| [`SimdOps.cs`](src/NN/SimdOps.cs) | Vectorized `Dot`, `AddScaled`, `Scale` |
+| [`SimdOps.cs`](src/NN/SimdOps.cs) | Vectorized `Dot` and `AddScaled` |
 | [`ILayer.cs`](src/NN/ILayer.cs) | Non-generic layer interface, so a network can mix activation types |
 | [`Network.cs`](src/NN/Network.cs) | Layer stack, mini-batch SGD training loop, MSE loss, `Summary()` |
 | [`Sequential.cs`](src/NN/Sequential.cs) | Keras-style fluent builder with input-size inference |
 | [`ModelIO.cs`](src/NN/ModelIO.cs) | Saving and loading trained models |
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Finite-difference verification of the backward pass |
 | [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptron on AND, network on XOR |
+
+---
+
+## Contents
+
+**Part I — The Concepts** *(no code; read this first)*
+
+1. [What problem is a neural network actually solving?](#1-what-problem-is-a-neural-network-actually-solving)
+2. [The neuron](#2-the-neuron)
+3. [Layers and the network](#3-layers-and-the-network)
+4. [Learning = gradient descent](#4-learning--gradient-descent)
+5. [Measuring wrongness: the loss function](#5-measuring-wrongness-the-loss-function)
+6. [The chain rule](#6-the-chain-rule--the-one-piece-of-calculus-you-need)
+7. [**Worked example: one neuron, by hand**](#7-worked-example-one-neuron-by-hand)
+8. [**Worked example: the chain across two layers**](#8-worked-example-the-chain-across-two-layers)
+9. [The perceptron, XOR, and why this history matters](#9-the-perceptron-xor-and-why-this-history-matters)
+
+**Part II — The C# Implementation**
+
+10. [Reading order](#10-reading-order)
+11. [C# features you may not have met](#11-c-features-used-here-that-you-may-not-have-met)
+12. [Data layout](#12-data-layout--the-most-consequential-decision)
+13. [Activations in code](#13-activations-in-code)
+14. [The forward pass in code](#14-the-forward-pass-in-code)
+15. [SIMD](#15-simd--doing-several-multiplications-at-once)
+16. [The backward pass in code](#16-the-backward-pass-in-code)
+17. [Weight initialization](#17-weight-initialization--genuinely-not-optional)
+18. [The perceptron in code](#18-the-perceptron-in-code)
+19. [The network, Sequential, and saving models](#19-the-network-and-the-sequential-builder)
+20. [The training loop](#20-the-training-loop)
+21. [Gradient checking](#21-gradient-checking--how-you-know-the-code-is-right)
+
+**Part III — Practice**
+
+22. [Results](#22-results)
+23. [Debugging playbook](#23-debugging-playbook)
+24. [Exercises](#24-exercises)
+25. [What this implementation does *not* do](#25-what-this-implementation-does-not-do)
+26. [Where to go next](#26-where-to-go-next)
+27. [Glossary](#glossary)
+
+> **If you only read three sections:** §7 and §8 (backpropagation worked by hand) and §21
+> (how you know it's right).
 
 ---
 ---
@@ -237,7 +280,7 @@ $$\frac{\partial L}{\partial a_j} = \frac{2(a_j - y_j)}{m}$$
 Sensible: if prediction exceeds target, the derivative is positive, meaning "lower this output."
 
 MSE is the natural choice for regression (predicting numbers). For classification,
-**cross-entropy** is better — see §24 item 3 and exercise 9.
+**cross-entropy** is better — see §25 item 3 and exercise 9.
 
 ---
 
@@ -793,7 +836,7 @@ examples, style transfer — that input gradient is exactly what you want. Not h
 
 **`if (delta == 0f) continue;`** skips units contributing nothing. With ReLU this is common:
 any unit whose output was clamped to 0 has a zero derivative, so it accumulates nothing. Which
-also flags a real failure mode — see §22.
+also flags a real failure mode — see §23.
 
 ### Accumulate now, apply later
 
@@ -803,7 +846,7 @@ also flags a real failure mode — see §22.
 $$W \mathrel{-}= \eta \cdot \frac{1}{\text{batchSize}}\frac{\partial L}{\partial W}$$
 
 Why separate them? Because it lets you sum gradients over several examples before updating —
-mini-batching, §19. Dividing by batch size averages rather than sums, so your learning rate
+mini-batching, §20. Dividing by batch size averages rather than sums, so your learning rate
 keeps working when you change batch size.
 
 This split is not an idiosyncrasy of this code. PyTorch divides at exactly the same seam:
@@ -856,7 +899,56 @@ ReLU discards half its input range.
 
 ---
 
-## 18. The network, and the Sequential builder
+## 18. The perceptron in code
+
+[`Perceptron`](src/NN/Perceptron.cs) is the odd one out: it's the only thing here that doesn't
+use backpropagation. It exists to make §9's history concrete and runnable.
+
+It's a `Dense<Step>` of exactly one unit, wrapped in its own training rule:
+
+```csharp
+public float Predict(ReadOnlySpan<float> x)
+{
+    _layer.Forward(x, _out);
+    return _out[0];
+}
+```
+
+The training loop ([`Perceptron.Train`](src/NN/Perceptron.cs#L29)) is the 1958 rule verbatim:
+
+```csharp
+float error = y[i] - Predict(xi);
+if (error == 0f) continue;          // correct prediction: no update at all
+
+float delta = learningRate * error;
+for (int k = 0; k < Inputs; k++)
+    w[k] += delta * xi[k];
+Bias += delta;
+```
+
+Three things to notice, all of which contrast instructively with backprop:
+
+**No derivative appears anywhere.** Compare with `Dense.Backward`, where every gradient is
+multiplied by `g'(z)`. The perceptron rule doesn't need one — which is exactly as well, because
+`Step.DerivativeFromOutput` throws (§13). This is the same fact from two directions: a step
+function has no usable slope, so gradient descent can't work on it, and the perceptron sidesteps
+that by not being gradient descent.
+
+**`error` is only ever −1, 0, or +1**, since both prediction and target are 0 or 1. It's a
+direction — "too high", "correct", "too low" — not a magnitude. Backprop's δ carries magnitude
+as well, which is what lets it say *how much* to correct.
+
+**Correct predictions cause no update**, and an epoch with no updates ends training early. That
+early exit is what makes "converged in 4 epochs" a meaningful statement rather than just the
+epoch limit being hit — and it's why the XOR case runs the full budget instead.
+
+The tests pin both behaviours: `Perceptron_converges_on_linearly_separable_data` and
+`Perceptron_cannot_learn_xor`. The second asserts *failure*, which is unusual and deliberate —
+it locks in a property of the algorithm that the rest of the library exists to overcome.
+
+---
+
+## 19. The network, and the Sequential builder
 
 [`Network`](src/NN/Network.cs) holds `ILayer[]`. This is a **sequential** model in exactly the Keras
 sense: a strictly linear chain, each layer's output feeding the next, no branching.
@@ -966,7 +1058,7 @@ network that loads "successfully."
 
 > **What is *not* saved:** gradient accumulators and the forward-pass activation cache. Those are
 > training scratch space, rebuilt empty on load. If you later add momentum or Adam, their state
-> would also need saving to resume training mid-run — see §24 item 7.
+> would also need saving to resume training mid-run — see §25 item 7.
 
 ### Where sequential stops being enough
 
@@ -999,7 +1091,7 @@ nonsense later. It also pre-allocates every buffer, so training allocates nothin
 
 ---
 
-## 19. The training loop
+## 20. The training loop
 
 Per **epoch** (one full pass over the data):
 
@@ -1038,7 +1130,7 @@ batch size 1 the same 4000 epochs would mean 16,000 updates.
 
 ---
 
-## 20. Gradient checking — how you *know* the code is right
+## 21. Gradient checking — how you *know* the code is right
 
 This is the section most tutorials omit, and it's the most practically valuable one.
 
@@ -1105,7 +1197,7 @@ The checks run as real tests (`dotnet test`), including two that are easy to ove
 
 ---
 
-## 21. Results
+## 22. Results
 
 ```
 Perceptron on AND: converged in 4 epochs      ← linearly separable
@@ -1124,7 +1216,7 @@ The XOR outputs aren't exactly 0 and 1 because sigmoid only *approaches* its lim
 
 ---
 
-## 22. Debugging playbook
+## 23. Debugging playbook
 
 The failure modes you'll actually hit, and what they mean:
 
@@ -1134,7 +1226,7 @@ The failure modes you'll actually hit, and what they mean:
 | Loss flat at a middling value | Zero/constant init — symmetry unbroken (§17) | Random initialization |
 | Loss decreases then plateaus high | Not enough capacity, or saturated units | More hidden units; try tanh over sigmoid |
 | Loss barely moves | Learning rate too low, or vanishing gradients | Raise learning rate; use ReLU/tanh |
-| Trains but predicts poorly | Gradient bug, or genuinely too few epochs | **Gradient check first** (§20) |
+| Trains but predicts poorly | Gradient bug, or genuinely too few epochs | **Gradient check first** (§21) |
 | ReLU net stops improving | Dead units — output 0 for all inputs, so gradient is permanently 0 | Lower learning rate; try leaky ReLU |
 | Perfect on training data, bad on new data | Overfitting — memorization, not learning | More data, fewer parameters, regularization |
 
@@ -1143,7 +1235,7 @@ unbounded waste of time.
 
 ---
 
-## 23. Exercises
+## 24. Exercises
 
 Worked roughly in order of value. The "break it" ones teach the most.
 
@@ -1156,7 +1248,7 @@ Worked roughly in order of value. The "break it" ones teach the most.
    same *nonzero* value (say 0.5) and watch the different, milder failure: the layer learns, but
    as though it had a single unit.
 3. **Break the gradient.** Change `Tanh.DerivativeFromOutput` to `1 + a * a`. Watch the gradient
-   check jump to O(1) while training *still partly works*. This is why §20 exists.
+   check jump to O(1) while training *still partly works*. This is why §21 exists.
 4. **Sweep the learning rate.** Try 0.01, 0.1, 0.5, 2.0, 10.0 on XOR. You'll see slow crawling,
    healthy descent, and divergence to `NaN` — the whole spectrum from §4.
 5. **Shrink the hidden layer** to 1 unit. XOR becomes unsolvable again; 2 is the theoretical
@@ -1173,11 +1265,11 @@ Worked roughly in order of value. The "break it" ones teach the most.
 9. **Add cross-entropy loss.** For classification it beats MSE: with a sigmoid output the
    `σ'(z)` factor cancels against the loss derivative, removing the slowdown that occurs when
    the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient).
-10. **Implement `ForwardBatch` as a real tiled GEMM** (§24, item 1) and benchmark it.
+10. **Implement `ForwardBatch` as a real tiled GEMM** (§25, item 1) and benchmark it.
 
 ---
 
-## 24. What this implementation does *not* do
+## 25. What this implementation does *not* do
 
 Honest limits, ordered by how much they cost:
 
@@ -1205,7 +1297,7 @@ understanding, and at this scale it will never be your bottleneck.
 
 ---
 
-## 25. Where to go next
+## 26. Where to go next
 
 Roughly in order:
 

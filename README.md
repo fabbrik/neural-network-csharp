@@ -32,7 +32,7 @@ gradient against a central finite difference, and the test suite asserts the acc
 only a *correct* gradient produces — including a test with a deliberately broken derivative, to
 prove the check can actually fail.
 
-**It's honest about its limits.** [§24 of the study guide](STUDY-GUIDE.md) lists what this
+**It's honest about its limits.** [§25 of the study guide](STUDY-GUIDE.md) lists what this
 implementation doesn't do and what it would cost, in order — starting with the admission that
 batched GEMM would outweigh every SIMD optimization in the codebase.
 
@@ -40,7 +40,7 @@ batched GEMM would outweigh every SIMD optimization in the codebase.
 
 ```bash
 dotnet run --project src/NN.Demo    # perceptron on AND, network on XOR, save/load, gradient check
-dotnet test                         # 42 tests
+dotnet test                         # 45 tests
 ```
 
 Output:
@@ -100,7 +100,7 @@ scalar tail for lengths that aren't a multiple of the width.
 ```
 src/NN/           the library
 src/NN.Demo/      runnable demonstration
-tests/NN.Tests/   42 tests
+tests/NN.Tests/   45 tests
 STUDY-GUIDE.md    the long-form explanation
 ```
 
