@@ -1,0 +1,85 @@
+namespace NN;
+
+/// <summary>
+/// Fluent builder for a sequential (strictly linear) stack of layers, in the style of Keras'
+/// <c>Sequential</c> model.
+///
+/// <code>
+/// var net = new Sequential(inputs: 2)
+///     .Dense&lt;Tanh&gt;(4)
+///     .Dense&lt;Sigmoid&gt;(1)
+///     .Build(seed: 42);
+/// </code>
+///
+/// The point of the builder is **input-size inference**: you state the network's input width
+/// once, and each layer takes its input count from the previous layer's unit count. Constructing
+/// <see cref="Network"/> directly requires stating both ends of every layer and keeping them
+/// consistent by hand.
+/// </summary>
+public sealed class Sequential
+{
+    private readonly List<ILayer> _layers = [];
+    private readonly int _inputs;
+    private int _width;   // output width of the last layer added — the next layer's input count
+
+    /// <param name="inputs">Number of features in one input example.</param>
+    public Sequential(int inputs)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inputs);
+
+        _inputs = inputs;
+        _width = inputs;
+    }
+
+    /// <summary>Layers added so far.</summary>
+    public IReadOnlyList<ILayer> Layers => _layers;
+
+    /// <summary>The width the next added layer will take as its input count.</summary>
+    public int CurrentWidth => _width;
+
+    /// <summary>
+    /// Appends a dense layer of <paramref name="units"/> units with activation
+    /// <typeparamref name="TActivation"/>. Its input count is inferred from the previous layer.
+    /// </summary>
+    public Sequential Dense<TActivation>(int units) where TActivation : IActivation
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(units);
+
+        _layers.Add(new Dense<TActivation>(_width, units));
+        _width = units;
+        return this;
+    }
+
+    /// <summary>
+    /// Appends a pre-built layer — the escape hatch for layer types the fluent API doesn't cover.
+    /// Its <see cref="ILayer.Inputs"/> must match the current width.
+    /// </summary>
+    public Sequential Add(ILayer layer)
+    {
+        ArgumentNullException.ThrowIfNull(layer);
+
+        if (layer.Inputs != _width)
+            throw new ArgumentException(
+                $"Layer expects {layer.Inputs} inputs but the stack is {_width} wide here.", nameof(layer));
+
+        _layers.Add(layer);
+        _width = layer.Units;
+        return this;
+    }
+
+    /// <summary>
+    /// Builds the network: allocates buffers and randomizes weights.
+    /// </summary>
+    /// <param name="seed">Fixed by default so runs reproduce while you experiment.</param>
+    public Network Build(int seed = 42)
+    {
+        if (_layers.Count == 0)
+            throw new InvalidOperationException("Add at least one layer before building.");
+
+        if (_layers[0].Inputs != _inputs)
+            throw new InvalidOperationException(
+                $"First layer takes {_layers[0].Inputs} inputs but the model was declared with {_inputs}.");
+
+        return new Network(seed, [.. _layers]);
+    }
+}
