@@ -23,7 +23,12 @@ backpropagation, which is the one concept everything else depends on.
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Finite-difference verification of the backward pass |
 | [`Datasets.cs`](src/NN/Datasets.cs) | Generated two-moons data, for train/test experiments |
 | [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptron, XOR, save/load, gradient check, two moons |
-| [`NN.Mnist/`](src/NN.Mnist/) | Handwritten digit recognition: IDX reader, dataset cache, the demo |
+| [`Idx.cs`](src/NN.Mnist/Idx.cs) | Reader for MNIST's IDX file format (big-endian, one-hot labels) |
+| [`MnistData.cs`](src/NN.Mnist/MnistData.cs) | Downloads and caches MNIST; skips cleanly when offline |
+| [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) | PNG and Netpbm decoding, with no dependencies |
+| [`DigitPreprocessor.cs`](src/NN.Mnist/DigitPreprocessor.cs) | Puts any image into MNIST's conventions — §22 |
+| [`NN.Mnist/Program.cs`](src/NN.Mnist/Program.cs) | The digit recognizer: train, evaluate, read an image |
+| [`models/`](models/) | A trained recognizer, checked in so digit reading works on a fresh clone |
 | [`bench/`](bench/README.md) | Benchmarks behind every performance claim below |
 
 ---
@@ -1960,6 +1965,21 @@ var net = new Sequential(inputs: 784)
 ```
 
 `SoftmaxOutput` exists precisely so the pairing cannot be got wrong by accident.
+
+For the cases the shortcut doesn't cover there is `WithLoss`, which sets the loss explicitly and
+leaves the output layer to you — that is how the test suite installs deliberately broken losses to
+prove the gradient check can fail. A built network exposes its choice as `Network.LossFunction`,
+which is also what `ModelIO` writes to disk:
+
+```csharp
+var net = new Sequential(inputs: 3)
+    .Dense<Tanh>(6)
+    .Dense<Identity>(4)
+    .WithLoss(SoftmaxCrossEntropy.Instance)   // equivalent to SoftmaxOutput(4)
+    .Build(seed: 7);
+
+net.LossFunction.Name;   // "softmax-cross-entropy"
+```
 
 **It is gradient-checked.** A cancellation this convenient is exactly the kind of algebra that is
 easy to get *almost* right, and §21's argument applies with full force: an almost-right gradient

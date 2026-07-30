@@ -253,6 +253,7 @@ with **98.02% in 37 s** as the number to beat.
 | **Persistence** | Versioned binary format with architecture + weights; train once, reload in ms |
 | **Verification** | Finite-difference gradient checking |
 | **Data** | Generated two-moons dataset; MNIST loader (IDX format, download + cache) |
+| **Images** | PNG and Netpbm decoding, and MNIST-convention normalization, with no dependencies |
 
 ## Design notes
 
