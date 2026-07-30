@@ -12,4 +12,10 @@
     <ProjectReference Include="../NN/NN.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- The checked-in trained recognizer, copied next to the executable so reading a digit from
+         an image works on a fresh clone: no training run, no 11 MB dataset download. -->
+    <None Include="../../models/mnist-784-128-10.nnm" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

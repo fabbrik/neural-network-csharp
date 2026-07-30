@@ -34,14 +34,28 @@ public sealed class Network
     public int Outputs => _layers[^1].Units;
     public IReadOnlyList<ILayer> Layers => _layers;
 
+    /// <summary>
+    /// How this network is scored, and how its raw output is presented. Mean squared error by
+    /// default; <see cref="SoftmaxCrossEntropy"/> turns it into a classifier whose outputs are
+    /// probabilities. Saved with the model, so a reloaded network behaves identically.
+    /// </summary>
+    public ILoss LossFunction { get; }
+
     /// <summary>Creates a network from an ordered layer stack and randomizes its weights.</summary>
     /// <param name="seed">Fixed seed so runs are reproducible while you experiment.</param>
     /// <param name="layers">Layers in forward order; adjacent shapes must match.</param>
-    public Network(int seed, params ILayer[] layers) : this(seed, layers, initialize: true) { }
+    public Network(int seed, params ILayer[] layers) : this(seed, layers, initialize: true, loss: null) { }
 
     /// <summary>Creates a network with the default seed (42).</summary>
     /// <param name="layers">Layers in forward order; adjacent shapes must match.</param>
     public Network(params ILayer[] layers) : this(seed: 42, layers) { }
+
+    /// <summary>Creates a network with an explicit loss.</summary>
+    /// <param name="seed">Seed for weight initialization.</param>
+    /// <param name="loss">How to score outputs; null means <see cref="MeanSquaredError"/>.</param>
+    /// <param name="layers">Layers in forward order; adjacent shapes must match.</param>
+    public Network(int seed, ILoss? loss, params ILayer[] layers)
+        : this(seed, layers, initialize: true, loss) { }
 
     /// <param name="seed">Seed for weight initialization.</param>
     /// <param name="layers">Layers in forward order.</param>
@@ -49,7 +63,8 @@ public sealed class Network
     /// False when the layers already carry trained parameters — a model being loaded from disk.
     /// Randomizing them at that point would silently destroy the very weights just read.
     /// </param>
-    private Network(int seed, ILayer[] layers, bool initialize)
+    /// <param name="loss">How to score outputs; null means <see cref="MeanSquaredError"/>.</param>
+    private Network(int seed, ILayer[] layers, bool initialize, ILoss? loss)
     {
         ArgumentOutOfRangeException.ThrowIfZero(layers.Length);
 
@@ -57,6 +72,13 @@ public sealed class Network
             if (layers[i].Inputs != layers[i - 1].Units)
                 throw new ArgumentException(
                     $"Layer {i} takes {layers[i].Inputs} inputs but layer {i - 1} emits {layers[i - 1].Units}.", nameof(layers));
+
+        LossFunction = loss ?? Losses.Default;
+
+        // Checked once, here, rather than per example: softmax cross-entropy's fused gradient is
+        // only valid over a linear output layer, and a mismatch would produce a wrong gradient
+        // rather than an error.
+        LossFunction.Validate(layers[^1]);
 
         _layers = layers;
         _shuffleRng = new Random(seed);
@@ -78,7 +100,8 @@ public sealed class Network
     /// Wraps layers whose parameters are already trained, skipping weight initialization.
     /// Used by <see cref="ModelIO.Load(string)"/>.
     /// </summary>
-    internal static Network FromTrainedLayers(ILayer[] layers) => new(seed: 0, layers, initialize: false);
+    internal static Network FromTrainedLayers(ILayer[] layers, ILoss? loss = null) =>
+        new(seed: 0, layers, initialize: false, loss);
 
     /// <summary>
     /// Runs one example through the stack and returns the output buffer, which is owned by the
@@ -96,6 +119,11 @@ public sealed class Network
 
         for (int i = 1; i < _layers.Length; i++)
             _layers[i].Forward(_activations[i - 1], _activations[i]);
+
+        // For a softmax network this converts logits into probabilities, so callers always see
+        // the output in its meaningful form. It is safe to rewrite the buffer in place: the
+        // backward pass reads each layer's own cache, not this one.
+        LossFunction.Transform(_activations[^1]);
 
         return _activations[^1];
     }
@@ -141,24 +169,15 @@ public sealed class Network
     }
 
     /// <summary>
-    /// Mean squared error for one example. Touches no training state — neither the gradient
-    /// accumulators nor the backward pass's activation cache — which is what lets
-    /// <see cref="GradientCheck"/> evaluate the loss thousands of times mid-check.
+    /// Scores one example under this network's <see cref="LossFunction"/>. Touches no training
+    /// state — neither the gradient accumulators nor the backward pass's activation cache — which
+    /// is what lets <see cref="GradientCheck"/> evaluate it thousands of times mid-check.
     /// </summary>
     public float Loss(ReadOnlySpan<float> x, ReadOnlySpan<float> y)
     {
         if (y.Length != Outputs) throw new ArgumentException($"Expected {Outputs} targets, got {y.Length}.", nameof(y));
 
-        ReadOnlySpan<float> a = Predict(x);
-        float loss = 0f;
-
-        for (int j = 0; j < a.Length; j++)
-        {
-            float e = a[j] - y[j];
-            loss += e * e;
-        }
-
-        return loss / a.Length;
+        return LossFunction.Evaluate(Predict(x), y);
     }
 
     /// <summary>
@@ -176,26 +195,27 @@ public sealed class Network
         for (int i = 1; i < _layers.Length; i++)
             _layers[i].ForwardTrain(_activations[i - 1], _activations[i]);
 
-        ReadOnlySpan<float> a = _activations[^1];
-
-        // MSE = mean over outputs of (a - y)²  →  dL/da = 2(a - y) / outputs
         int last = _layers.Length - 1;
-        Span<float> gradOut = _grads[last];
-        float loss = 0f;
 
-        for (int j = 0; j < a.Length; j++)
-        {
-            float e = a[j] - y[j];
-            loss += e * e;
-            gradOut[j] = 2f * e / a.Length;
-        }
+        // Present the raw output the way the loss defines it — softmax turns logits into
+        // probabilities here, MSE leaves them alone.
+        LossFunction.Transform(_activations[last]);
+
+        ReadOnlySpan<float> a = _activations[last];
+
+        // Seed the backward pass. What the loss writes is dL/d(the last layer's own output):
+        // for MSE that is 2(a - y)/m, and for softmax cross-entropy the fused p - y, which is
+        // correct precisely because that layer is linear and its derivative is 1.
+        LossFunction.Gradient(a, y, _grads[last]);
+
+        float loss = LossFunction.Evaluate(a, y);
 
         // Walk backwards; each layer hands its input gradient to the one before it.
         // The first layer gets an empty span — nothing consumes dL/dx of the raw input.
         for (int i = last; i >= 0; i--)
             _layers[i].Backward(_grads[i], i > 0 ? _grads[i - 1] : Span<float>.Empty);
 
-        return loss / a.Length;
+        return loss;
     }
 
     /// <summary>

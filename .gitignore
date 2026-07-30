@@ -483,5 +483,9 @@ $RECYCLE.BIN/
 # Vim temporary swap files
 *.swp
 
-# Trained models produced by the demo
+# Trained models produced by the demos are build output, not source.
 *.nnm
+
+# ...except the one checked in on purpose: a trained MNIST recognizer, so the digit-reading
+# example works on a fresh clone with no training run and no 11 MB dataset download.
+!models/*.nnm

@@ -18,6 +18,7 @@ backpropagation, which is the one concept everything else depends on.
 | [`ILayer.cs`](src/NN/ILayer.cs) | Non-generic layer interface, so a network can mix activation types |
 | [`Network.cs`](src/NN/Network.cs) | Layer stack, mini-batch SGD training loop, MSE loss, `Summary()` |
 | [`Sequential.cs`](src/NN/Sequential.cs) | Keras-style fluent builder with input-size inference |
+| [`Loss.cs`](src/NN/Loss.cs) | `ILoss`, mean squared error, and softmax cross-entropy |
 | [`ModelIO.cs`](src/NN/ModelIO.cs) | Saving and loading trained models |
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Finite-difference verification of the backward pass |
 | [`Datasets.cs`](src/NN/Datasets.cs) | Generated two-moons data, for train/test experiments |
@@ -63,7 +64,8 @@ backpropagation, which is the one concept everything else depends on.
 24. [Exercises](#24-exercises)
 25. [What this implementation does *not* do](#25-what-this-implementation-does-not-do)
 26. [Where to go next](#26-where-to-go-next)
-27. [Glossary](#glossary)
+27. [Softmax and cross-entropy](#27-softmax-and-cross-entropy)
+28. [Glossary](#glossary)
 
 > **If you only read three sections:** §7 and §8 (backpropagation worked by hand) and §21
 > (how you know it's right).
@@ -289,7 +291,7 @@ $$\frac{\partial L}{\partial a_j} = \frac{2(a_j - y_j)}{m}$$
 Sensible: if prediction exceeds target, the derivative is positive, meaning "lower this output."
 
 MSE is the natural choice for regression (predicting numbers). For classification,
-**cross-entropy** is better — see §25 item 3 and exercise 11.
+**cross-entropy** is better, and this codebase implements it — see §27.
 
 ---
 
@@ -1151,7 +1153,8 @@ outputs, exactly.
 
 ```
   magic     8 bytes   "NNMODEL\0"
-  version   int32     1
+  version   int32     2
+  loss      string    "mse" or "softmax-cross-entropy"   (version 2+)
   layers    int32     how many
   per layer:
     descriptor  string   "Dense<Tanh>"
@@ -1161,7 +1164,7 @@ outputs, exactly.
     biases      float32 × units
 ```
 
-Four decisions in there are worth understanding, because they're the ones people get wrong:
+Five decisions in there are worth understanding, because they're the ones people get wrong:
 
 **Save the architecture, not just the weights.** A bare float dump has no idea what shape it
 was, so loading it into mismatched code silently produces garbage. Storing layer types and
@@ -1183,6 +1186,14 @@ constructing a network from loaded layers would destroy the parameters you just 
 `ModelIO` calls `Network.FromTrainedLayers`, which skips initialization. It's a real bug I hit
 writing this, and it's nasty precisely because it doesn't crash — you'd just get an untrained
 network that loads "successfully."
+
+**Save the loss, not just the layers** — the change that took the format to version 2, and the
+case the version field was put there for. A softmax classifier's weights are meaningless without
+knowing softmax applies to them: load one as a plain network and it returns unbounded logits where
+the caller expects probabilities. Nothing throws, `Predict` still returns ten numbers, and only
+their *values* are wrong (§27). Version 1 files predate any choice of loss and still load — as
+mean squared error, which is what they were. **A format version earns its keep the first time you
+need to add a field**, and "old files keep working" is the whole return on having written it down.
 
 > **What is *not* saved:** gradient accumulators and the forward-pass activation cache. Those are
 > training scratch space, rebuilt empty on load. If you later add momentum or Adam, their state
@@ -1520,19 +1531,19 @@ made it visible**, and nothing in this library computes one for you — §25 ite
 greyscale, the dataset every introduction eventually arrives at. The jump in scale from the moons
 is the point — 784 inputs instead of 2, and 101,770 parameters instead of 337.
 
-Architecture: **784 → 128 tanh → 10 sigmoid**, one output per digit, trained on one-hot targets.
-The prediction is whichever output fires hardest.
+Architecture: **784 → 128 tanh → 10 logits → softmax**, one output per digit, trained on one-hot
+targets with cross-entropy. The prediction is whichever probability is highest.
 
 ```
   epoch   train loss   test acc      elapsed
-      1      0.02343    91.87%        2.1s
-     10      0.00573    96.55%       18.3s
-     20      0.00352    97.41%       36.4s
+      1      0.32598    93.53%        2.1s
+     10      0.04203    97.86%       18.6s
+     20      0.01349    98.02%       36.9s
 
-  Final: train 98.45%, test 97.41%, 37.3s total
+  Final: train 99.90%, test 98.02%, 37.3s total
 ```
 
-**97.41% on digits it has never seen, in 37 seconds**, from the code in this guide. Two seconds
+**98.02% on digits it has never seen, in 37 seconds**, from the code in this guide. Two seconds
 per epoch over 60,000 examples — the SIMD and layout work of §12 and §15 is finally operating at a
 size where it matters, which is also why the benchmarks measure a 784×128 layer.
 
@@ -1542,30 +1553,41 @@ Three things this demo teaches that nothing smaller can:
 
 ```
              0     1     2     3     4     5     6     7     8     9    accuracy
-    1        ·  1123     3     1     ·     1     3     1     3     ·      98.9%
-    4        1     ·     1     1   956     ·     6     3     2    12      97.4%
-    7        ·    10    14     2     ·     ·     ·   989     2    11      96.2%
+    1        ·  1128     3     1     ·     1     1     1     ·     ·      99.4%
+    5        3     1     ·    12     1   863     5     ·     5     2      96.7%
+    9        2     2     1     7     4     3     2     4     2   982      97.3%
 ```
 
-Ones are nearly perfect; sevens are the worst class, and their errors go mostly to 1, 2 and 9 —
-digits that genuinely share strokes with a 7. The network's mistakes are *structured*, and the
-demo prints the misclassified digits as ASCII so you can see that most are ones a person would
+Ones are nearly perfect; fives are the worst class, and twelve of them are called 3 — two digits
+that genuinely share a top stroke and a lower bowl. The network's mistakes are *structured*, and
+the demo prints the misclassified digits as ASCII so you can see that most are ones a person would
 also hesitate over.
 
-**A learning rate of 1.0 is required, and that is a diagnosis.** The guide recommends 0.1–0.5
-(§4). This demo needs 1.0, and the reason is the gradient arriving too weak:
+**The choice of loss is worth more than any amount of extra training.** The same network scored by
+MSE over ten sigmoids reaches only 97.41%, and needs a learning rate of **1.0** to do it — far
+outside the 0.1–0.5 §4 recommends. Run `--loss mse` and watch. The cause is a gradient arriving
+already flattened, twice over:
 
 $$\frac{\partial L}{\partial a} = \frac{2(a-y)}{10} \quad\text{then}\quad \times\, \sigma'(z) = a(1-a) \le 0.25$$
 
 Dividing by ten outputs, then multiplying by a factor that peaks at 0.25 and collapses toward zero
-as outputs saturate. The step size has to compensate for a gradient that MSE-over-sigmoid made
-small. Cross-entropy with a softmax output cancels the `σ'(z)` factor **exactly** — that
-cancellation is the whole reason classifiers use it, and here you can watch its absence.
+as outputs saturate — that is, exactly when the network is confidently wrong and most needs to
+learn. The huge step size is compensation for a handicap the loss function imposed.
 
-**The library's documented limits become measurable rather than theoretical.** 97.4% is about par
-for this architecture; the ~98% usually quoted needs cross-entropy and a better optimizer. §25
-items 2 and 3 are no longer caveats in a list — they are a 0.6-point gap and a chunk of those 37
-seconds, and exercises 10 and 11 are where you close them.
+Softmax with cross-entropy removes it. Measured on identical architecture, seed and epochs:
+
+| Loss | Test accuracy | Learning rate |
+|---|---|---|
+| MSE over ten sigmoids | 97.41% | 1.0 |
+| MSE, at cross-entropy's learning rate | 92.93% | 0.1 |
+| **Softmax + cross-entropy** | **98.02%** | **0.1** |
+
+The middle row is the honest one: at the same learning rate the difference is five points, and MSE
+only closes the gap by taking steps ten times larger. §27 explains the mechanism.
+
+**The library's documented limits become measurable rather than theoretical.** 98.0% is par for
+this architecture. What remains is §25 item 2 — plain SGD, no momentum or Adam — which is
+exercise 10, with a concrete number to beat.
 
 ### And this is where saving a model finally means something
 
@@ -1610,6 +1632,92 @@ is the harder kind to notice.
 > This is also §25 item 7 in practice: only parameters are saved, not optimizer state or training
 > history. Fine here, because inference is all that's wanted. You could not resume an interrupted
 > training run from this file.
+
+### Reading a digit out of an image file
+
+A trained model on disk means you can point it at a picture. The repository ships one — a trained
+recognizer, [`models/mnist-784-128-10.nnm`](models/) — so this works on a fresh clone with no
+training run and no dataset download:
+
+```bash
+dotnet run -c Release --project src/NN.Mnist -- --image my-digit.png
+```
+
+```
+Model:  .../mnist-784-128-10.nnm
+Image:  my-digit.png
+
+  248x248 image, normalized to MNIST's 28x28 convention:
+
+                        ..****++
+                    ==@@@@@@@@@@++
+                  ..@@@@%%--..@@@@..
+                  ++@@%%      ::@@++
+                  ++@@--        @@++
+
+  This is a 0.  (confidence 0.999)
+
+    0  0.999  ███████████████████████████████████████
+    9  0.000
+```
+
+PNG and Netpbm are decoded in [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) with no dependency
+beyond the framework. Most of that file is not decompression — `ZLibStream` does that — but
+**unfiltering**, PNG's own contribution: before compressing, each scanline stores the *difference*
+between every byte and a prediction from its neighbours (left, above, or Paeth's blend of both),
+which turns smooth images into runs of near-zero bytes that deflate flattens. Decoding is
+therefore strictly sequential — the "Up" filter refers to the already-reconstructed row above.
+
+**But the decoder is the easy half. The important half is [`DigitPreprocessor`](src/NN.Mnist/DigitPreprocessor.cs).**
+
+#### The network did not learn "digits" — it learned MNIST's conventions
+
+This is the single most common reason a from-scratch recognizer scores 97% on the test set and
+then fails on the first photo you feed it, and it is worth internalizing well beyond this project.
+
+MNIST images are not merely "pictures of digits." They are pictures under three specific rules:
+
+| Convention | Your image probably | Consequence if ignored |
+|---|---|---|
+| **White ink on black** | Dark pen on white paper | The network sees a bright frame with a dark hole — nothing like a digit |
+| **Digit fills a 20×20 box** | Small, with margin around it | Downscaling the whole frame leaves a smudge a few pixels wide |
+| **Centred by centre of mass in 28×28** | Wherever it happened to be | Every stroke lands where the network learned to see background |
+
+Violate any one and accuracy collapses in a way that looks exactly like a broken model. So the
+preprocessor:
+
+1. **Detects polarity from the border**, not the whole image — the frame's edge is background
+   almost by definition, whereas a thick digit can drag the overall mean darker than you'd guess.
+2. **Crops to the ink's bounding box**, then scales to fit a 20×20 box *preserving aspect ratio*.
+   Stretching to fill the square would give a `1` an `8`'s worth of ink in the wrong places.
+3. **Resamples by box filter**, averaging every source pixel that falls into each destination
+   pixel. Nearest-neighbour is the obvious choice and is wrong: downscaling 248 pixels to 20 by
+   sampling one in twelve drops most of the stroke and yields a dotted, broken digit. Averaging
+   preserves it as the soft grey edges MNIST itself has.
+4. **Centres by centre of mass**, not bounding box. MNIST did this, and the difference is real —
+   a 7 with a long descending stroke carries its mass high and its box centre low.
+
+> **The lesson generalizes.** Those hundred lines are worth as much as the 101,770 trained
+> parameters, because the parameters are meaningless applied to input in the wrong shape. "Most of
+> machine learning is data preparation" is usually said about *training* data; it is just as true
+> of the data you hand a finished model. The model is a function, and a function applied outside
+> its domain returns confident nonsense rather than an error.
+
+#### Verifying it end to end
+
+The pipeline was checked by exporting MNIST test digits as **248×248 PNGs, dark-on-light with
+wide margins** — deliberately violating all three conventions — and reading them back:
+
+**Ten out of ten agreed with what the model predicts on the raw MNIST data**, including one it
+gets *wrong*: a 5 it calls a 6 — at 0.898 confidence through the image pipeline, and 0.898 on the
+same digit read straight from the dataset. That last one is the useful result. The pipeline
+reproduces the model's mistakes as faithfully as its successes, and to three decimal places, which
+is how you know the preprocessing is transparent rather than accidentally helping. A preprocessing
+step that "fixed" that 5 would be evidence of a bug, not of quality.
+
+If a prediction comes back with low confidence or a close runner-up, the demo says so and points
+at the 28×28 rendering it printed. **Look at that picture first.** A digit that appears inverted,
+tiny, or off-centre is a preprocessing problem, and no amount of additional training will fix it.
 
 > The dataset is not in the repository. The demo downloads it once (~11 MB) and caches it outside
 > the working tree; later runs, including offline ones, read the cache. With neither network nor
@@ -1672,25 +1780,31 @@ Worked roughly in order of value. The "break it" ones teach the most.
    at fixed capacity and watch the train/test gap close. Then hold the data at 20 and shrink the
    network instead. Two different cures for the same disease.
 10. **Add momentum:** keep a velocity buffer per layer, `v = βv + grad` (β ≈ 0.9), and step along
-    `v`. Measure it on MNIST, where the baseline is **97.41% in 37 s** (§22) — a number concrete
-    enough to beat or fail to beat.
-11. **Add cross-entropy loss.** For classification it beats MSE: with a sigmoid output the
-    `σ'(z)` factor cancels against the loss derivative, removing the slowdown that occurs when
-    the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient). The MNIST demo
-    is the proof: it needs a learning rate of 1.0 purely to compensate for that missing
-    cancellation. If your version trains at 0.1 and still beats 97.41%, you've done it right.
-12. **Look at what MNIST gets wrong.** The demo prints its own misclassified digits. Are they
+    `v`. Measure it on MNIST, where the baseline is **98.02% in 37 s** (§22) — a number concrete
+    enough to beat or fail to beat. This is the biggest improvement still unimplemented.
+11. **Prove the loss matters, then explain it.** Run MNIST both ways —
+    `--loss mse --retrain` against the default — and confirm the table in §22 on your own machine.
+    Then answer the question it raises: MSE reaches 97.41% *only* at a learning rate of 1.0, and
+    manages 92.93% at cross-entropy's 0.1. Which of the two shrinking factors in §27 accounts for
+    more of that gap? (Try MSE over a `Dense<Identity>` output to remove `σ'(z)` while keeping
+    MSE, and see where it lands.)
+12. **Derive the fused gradient yourself.** §27 states that softmax's Jacobian and cross-entropy's
+    `1/p` cancel to leave `p - y`. Do the algebra for the two-class case and watch it happen, then
+    deliberately break `SoftmaxCrossEntropy.Gradient` — use `p - y` scaled by 2, say — and run
+    `SoftmaxGradientTests`. A wrong-but-plausible gradient still trains; the check still catches
+    it. This is §21's argument applied to the one piece of algebra in the codebase.
+13. **Look at what MNIST gets wrong.** The demo prints its own misclassified digits. Are they
     genuinely ambiguous, or is the network failing on something a person would find easy? Then
     read the confusion matrix: which pairs does it mix up, and do those digits share strokes?
-    This is the habit that separates "96%" from knowing what a model actually does.
-13. **Break the forward cache on purpose.** Make `Forward` cache again (§14) and call
+    This is the habit that separates "98%" from knowing what a model actually does.
+14. **Break the forward cache on purpose.** Make `Forward` cache again (§14) and call
     `net.Predict(...)` between `AccumulateGradients` and `ApplyGradients`. Nothing throws, loss
     still falls, and the network trains on the wrong example. Then run `CacheLifetimeTests` and
     watch them catch it. The best available demonstration of why "it still trains" proves nothing.
-14. **Implement `ForwardBatch` as a real tiled GEMM** (§25 item 1) and benchmark it against the
+15. **Implement `ForwardBatch` as a real tiled GEMM** (§25 item 1) and benchmark it against the
     existing null result in [`bench/`](bench/README.md). This is the largest measured win still on
     the table.
-15. **Re-run the benchmarks on your own machine.** If it's x86, `Vector<float>` is 8 or 16 wide
+16. **Re-run the benchmarks on your own machine.** If it's x86, `Vector<float>` is 8 or 16 wide
     rather than 4. Which conclusions in [`bench/README.md`](bench/README.md) change, and which
     hold? The ones that hold are the ones worth trusting.
 
@@ -1714,10 +1828,11 @@ Honest limits, ordered by how much they cost:
    dominate every other optimization here — remains unmeasured, because it remains unwritten.
    That is exercise 14, and it is still the largest single win available.
 2. **Plain SGD.** No momentum, Adam, learning-rate schedule, or weight decay. Adam typically
-   converges several times faster — measurable now against MNIST's 97.41% in 37 s (§22).
-3. **MSE only.** Cross-entropy is the right loss for classification (exercise 11), and §22's MNIST
-   run puts a price on its absence: a learning rate of 1.0 is needed purely to compensate for the
-   `σ'(z)` factor that cross-entropy would cancel.
+   converges several times faster — measurable now against MNIST's 98.02% in 37 s (§22). With
+   cross-entropy implemented, this is the largest remaining gap.
+3. **Two losses only** — mean squared error and softmax cross-entropy (§27). Enough for
+   regression and single-label classification; multi-label classification wants per-output binary
+   cross-entropy, which does not exist here.
 4. **Single-threaded.** No `Parallel.For` over units or batch rows.
 5. **No explicit FMA.** `acc += a * b` may or may not fuse into one instruction;
    `Vector256.FusedMultiplyAdd` guarantees it, at the cost of writing a separate ARM path.
@@ -1741,19 +1856,124 @@ understanding, and at this scale it will never be your bottleneck.
 
 Roughly in order:
 
-1. **Cross-entropy loss + softmax output** — the standard classification setup, and the single
-   biggest improvement available to this codebase. §22's MNIST run shows exactly what its absence
-   costs: a learning rate of 1.0 to compensate for a gradient MSE made weak.
+1. **Momentum, then Adam** — now the largest single improvement still available, since
+   cross-entropy is implemented (§27). Baseline to beat: 98.02% in 37 s.
 2. **A real dataset — already here.** MNIST is the classic first one, and
-   [`src/NN.Mnist`](src/NN.Mnist/) trains a 784 → 128 → 10 network on it to 97.4% in 37 seconds.
+   [`src/NN.Mnist`](src/NN.Mnist/) trains a 784 → 128 → 10 network on it to 98.0% in 37 seconds.
    The next step up is Fashion-MNIST (same shape and loader, harder problem) or CIFAR-10 (colour,
    and genuinely wants convolution).
-3. **Momentum, then Adam.**
-4. **Regularization** — dropout, weight decay — once you can overfit something.
-5. **Convolutional layers**, if images interest you.
-6. **A real framework.** Having built this, PyTorch's `loss.backward()` /
+3. **Regularization** — dropout, weight decay — once you can overfit something.
+4. **Convolutional layers**, if images interest you.
+5. **A real framework.** Having built this, PyTorch's `loss.backward()` /
    `optimizer.step()` will read as familiar machinery rather than magic — which is exactly the
    payoff for writing it yourself once.
+
+---
+
+## 27. Softmax and cross-entropy
+
+MSE is the right loss for *regression* — predicting numbers. For *classification* — choosing one
+of several mutually exclusive categories — it is the wrong tool, and §22's MNIST run measures the
+cost: 97.41% and a learning rate of 1.0, against 98.02% at 0.1.
+
+This section explains why, because the mechanism is one of the most useful pieces of calculus in
+practical machine learning, and it is short.
+
+### What's wrong with ten sigmoids
+
+The MSE version gives each digit its own sigmoid output. Each one independently answers "is this a
+7?" — and nothing stops all ten answering "yes, 0.9". That is incoherent when the image is exactly
+one digit, and it means the network spends capacity learning a constraint the architecture should
+have enforced for free.
+
+### Softmax: making the outputs compete
+
+Softmax takes the last layer's raw scores — **logits**, unbounded and uninterpretable on their own
+— and turns them into a probability distribution:
+
+$$p_j = \frac{e^{z_j}}{\sum_k e^{z_k}}$$
+
+Every output is positive, and they sum to exactly 1. Raising one *necessarily* lowers the others,
+which is the constraint ten independent sigmoids lack.
+
+Two properties matter for the implementation:
+
+**It is shift-invariant.** Adding a constant to every logit changes nothing — the constant factors
+out of every numerator and out of the denominator, and cancels. This is not a curiosity; it is the
+only reason the code works, because:
+
+**The naive formula overflows.** `exp(z)` is infinity for z above about 88 in float32, and logits
+that large are ordinary in a trained network — giving `inf / inf = NaN`. Subtracting the largest
+logit first is exact (by shift-invariance) and makes the biggest exponent `exp(0) = 1`, so nothing
+can overflow. [`SoftmaxCrossEntropy.Transform`](src/NN/Loss.cs) does this, and the test suite
+checks it at logits of 1000.
+
+**Softmax cannot be an `IActivation`.** Every activation in §13 maps one number to one number.
+Softmax needs the whole layer's outputs at once, because of the denominator. That is why it lives
+on the loss rather than the layer — see the note on `ILoss.Transform`.
+
+### Cross-entropy: scoring the distribution
+
+Given a probability distribution, cross-entropy asks one question: *what probability did you
+assign to the right answer?*
+
+$$L = -\sum_j y_j \log(p_j) \quad\overset{\text{one-hot}}{=}\quad -\log(p_{\text{correct}})$$
+
+Confidently right costs nothing. Confidently wrong costs **unboundedly** much — `-log(0.001)` is
+6.9 and climbing, where MSE caps the penalty at 1 per output no matter how badly wrong you are.
+That difference in shape is what makes the gradient behave.
+
+### The fusion, which is the whole point
+
+Differentiate the two separately and both are unpleasant:
+
+- **Softmax alone** gives a full Jacobian — every output depends on every logit, so you get an
+  n×n matrix per example rather than a vector.
+- **Cross-entropy alone** gives a `1/p` term that explodes as p approaches 0 — exactly where a
+  badly wrong network lives.
+
+Compose them and almost everything cancels. What survives is:
+
+$$\frac{\partial L}{\partial z_j} = p_j - y_j$$
+
+**Prediction minus target.** No Jacobian, no division, nothing to overflow, and — critically — no
+`σ'(z)` factor to vanish. Compare the MSE-over-sigmoid chain from §22, whose gradient is scaled by
+`a(1-a) ≤ 0.25`, collapsing toward zero precisely when the network is most wrong. Cross-entropy's
+`1/p` blowing up and softmax's Jacobian shrinking cancel each other **exactly**.
+
+That is the entire reason classifiers are built this way, and it is why the MNIST demo trains at a
+learning rate of 0.1 instead of 1.0.
+
+### Two things the code does about it
+
+**It requires a linear output layer.** `p - y` is the derivative with respect to the *logits*. If
+the last layer squashed them through a sigmoid first, the formula would simply be false — and
+false in the worst way, since the network would still train, just badly. So
+[`SoftmaxCrossEntropy.Validate`](src/NN/Loss.cs) rejects any output layer that is not
+`Dense<Identity>`, once, at construction:
+
+```csharp
+var net = new Sequential(inputs: 784)
+    .Dense<Tanh>(128)
+    .SoftmaxOutput(10)      // Dense<Identity> + softmax cross-entropy, paired correctly
+    .Build();
+```
+
+`SoftmaxOutput` exists precisely so the pairing cannot be got wrong by accident.
+
+**It is gradient-checked.** A cancellation this convenient is exactly the kind of algebra that is
+easy to get *almost* right, and §21's argument applies with full force: an almost-right gradient
+still trains. `SoftmaxGradientTests` runs the same finite-difference check, including the accuracy
+U-curve, against the fused formula. That test is the difference between believing the derivation
+and knowing it.
+
+### The loss travels with the model
+
+A softmax classifier's weights are meaningless without the knowledge that softmax applies to them:
+load one as a plain network and it returns unbounded logits where the caller expects
+probabilities. Nothing throws — the numbers are just wrong. So the loss is written into the model
+file, which is what took the format to **version 2**. Version 1 files still load, as MSE, which is
+what they were (§19).
 
 ---
 

@@ -109,8 +109,8 @@ Overfitting: same problem, 20 training points, a much larger network
 ## Reading handwritten digits
 
 A separate demo trains on [MNIST](src/NN.Mnist/) — 60,000 handwritten digits, 784 inputs, 101,770
-parameters. **97.4% on digits it has never seen, in 37 seconds**, from two dense layers and
-backpropagation:
+parameters. **98.0% on digits it has never seen, in 37 seconds**, from two dense layers,
+backpropagation, and a softmax output:
 
 ```
 A training example (label 5):
@@ -127,29 +127,30 @@ A training example (label 5):
   **%%@@@@@@@@##--
 
   epoch   train loss   test acc      elapsed
-      1      0.02343    91.87%        2.1s
-     10      0.00573    96.55%       18.3s
-     20      0.00352    97.41%       36.4s
+      1      0.32598    93.53%        2.1s
+     10      0.04203    97.86%       18.6s
+     20      0.01349    98.02%       36.9s
 
 Confusion matrix — rows are the true digit, columns the prediction:
 
              0     1     2     3     4     5     6     7     8     9    accuracy
-    0      969     ·     ·     1     ·     3     3     1     2     1      98.9%
-    1        ·  1123     3     1     ·     1     3     1     3     ·      98.9%
-    4        1     ·     1     1   956     ·     6     3     2    12      97.4%
-    7        ·    10    14     2     ·     ·     ·   989     2    11      96.2%
+    0      971     ·     1     1     ·     1     3     1     1     1      99.1%
+    1        ·  1128     3     1     ·     1     1     1     ·     ·      99.4%
+    5        3     1     ·    12     1   863     5     ·     5     2      96.7%
+    9        2     2     1     7     4     3     2     4     2   982      97.3%
 ```
 
-It then prints the digits it got **wrong**, which is the more honest picture of "97%" than the
+It then prints the digits it got **wrong**, which is the more honest picture of "98%" than the
 number is — most are ambiguous enough that a person would hesitate too.
 
 **The trained model is saved, so you only pay for training once.** Re-running loads 397 KB of
-weights instead of retraining: **37 s → 4 ms**, same 97.41%.
+weights instead of retraining: **37 s → 4 ms**, same 98.02%.
 
 ```bash
-dotnet run -c Release --project src/NN.Mnist                  # reuse the saved model
-dotnet run -c Release --project src/NN.Mnist -- --predict 42  # classify one image
-dotnet run -c Release --project src/NN.Mnist -- --retrain     # train from scratch
+dotnet run -c Release --project src/NN.Mnist                     # reuse the saved model
+dotnet run -c Release --project src/NN.Mnist -- --predict 42     # classify one test image
+dotnet run -c Release --project src/NN.Mnist -- --image d.png    # classify your own image
+dotnet run -c Release --project src/NN.Mnist -- --retrain        # train from scratch
 ```
 
 `--predict` shows all ten outputs, so you can see what it nearly said:
@@ -157,13 +158,9 @@ dotnet run -c Release --project src/NN.Mnist -- --retrain     # train from scrat
 ```
   This is a 4. The network says 4 — correct.
 
-    3  0.001
-    4  0.974  ██████████████████████████████████████
-    7  0.005
-    9  0.017
+    4  0.999  ███████████████████████████████████████
+    9  0.001
 ```
-
-That runner-up is the 4/9 confusion from the matrix above, visible in a single prediction.
 
 After saving, the demo reloads the file and checks that 1,000 predictions come back **bit-for-bit
 identical** — a serializer that drops or reorders parameters yields a model that still loads,
@@ -174,12 +171,74 @@ the working tree; every later run, including offline ones, reads the cache. With
 cache it explains that and exits cleanly rather than failing — so `dotnet test` and the other demo
 never depend on a dataset mirror being up.
 
-That 97.4% is roughly par for the architecture, and the gap to the ~98% usually quoted is
-*explained by the library's documented limits, not by mystery*: MSE instead of softmax +
-cross-entropy, and plain SGD with no momentum. The demo needs a learning rate of **1.0** — far
-above the 0.1–0.5 the study guide recommends — and that is the MSE-over-sigmoid gradient being
-visibly weak. Study-guide exercises 10 and 11 are those two fixes, with 97.4% in 37 s as the
-number to beat.
+### Reading a digit out of an image file
+
+A trained recognizer **is** checked in — [`models/mnist-784-128-10.nnm`](models/) — so `--image`
+works on a fresh clone with no training run and no dataset download:
+
+```
+Image:  my-digit.png
+  248x248 image, normalized to MNIST's 28x28 convention:
+
+                        ..****++
+                    ==@@@@@@@@@@++
+                  ..@@@@%%--..@@@@..
+                  ++@@%%      ::@@++
+
+  This is a 0.  (confidence 0.999)
+```
+
+PNG and Netpbm are decoded in [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) with no dependency
+beyond the framework — most of which is not decompression (`ZLibStream` does that) but PNG's
+per-scanline *unfiltering*.
+
+**The decoder is the easy half.** The important half is
+[`DigitPreprocessor`](src/NN.Mnist/DigitPreprocessor.cs), because the network did not learn
+"digits" — it learned MNIST's conventions: white ink on black, scaled into a 20×20 box, centred in
+28×28 *by centre of mass*. Violate any one and accuracy collapses in a way that looks exactly like
+a broken model. Those hundred lines are worth as much as the 101,770 trained parameters, and the
+study guide explains why in detail.
+
+Verified end to end by exporting MNIST test digits as 248×248 PNGs, dark-on-light with wide
+margins — breaking all three conventions — and reading them back: **10/10 agreed with what the
+model predicts on the raw data**, including one it gets *wrong*. Reproducing the model's mistakes
+faithfully is how you know the preprocessing is transparent rather than accidentally helping.
+
+### Softmax and cross-entropy, and what they're worth
+
+The demo classifies with a **softmax output and cross-entropy loss** — the standard setup for
+choosing among mutually exclusive categories, and the reason it reaches 98%. The older
+ten-independent-sigmoids-scored-by-MSE version is still there for comparison:
+
+```bash
+dotnet run -c Release --project src/NN.Mnist -- --loss mse --retrain
+```
+
+| | Test accuracy | Learning rate needed |
+|---|---|---|
+| MSE over ten sigmoids | 97.41% | **1.0** |
+| Softmax + cross-entropy | **98.02%** | **0.1** |
+
+Same architecture, same 20 epochs, same seed. At an *identical* learning rate of 0.1 the MSE
+version manages only 92.93% — it needs 1.0 purely to compensate for a gradient it has already
+flattened.
+
+**Why.** MSE over sigmoids treats the digits as ten unrelated yes/no questions, and its gradient
+carries a `σ'(z) = a(1−a)` factor that collapses toward zero exactly when the network is
+confidently wrong — precisely when it most needs to learn. Softmax makes the ten outputs
+*compete* (they sum to 1), and cross-entropy scores only the probability given to the right
+answer. Differentiated separately, softmax gives a full Jacobian and cross-entropy a `1/p` that
+explodes; **composed, almost everything cancels and the gradient is just `p − y`** — prediction
+minus target, with nothing left to vanish or overflow.
+
+That cancellation is only valid over raw logits, so `SoftmaxOutput()` builds a linear
+`Dense<Identity>` layer and the loss *rejects* a squashed one rather than computing a quietly
+wrong gradient. The fused gradient is verified against finite differences in the test suite —
+an algebraic shortcut that is almost right is exactly the bug [`GradientCheck`](src/NN/GradientCheck.cs)
+exists to catch.
+
+The remaining headroom is plain SGD with no momentum or Adam (study-guide §25 item 2, exercise 10),
+with **98.02% in 37 s** as the number to beat.
 
 ## What's implemented
 
@@ -187,7 +246,8 @@ number to beat.
 |---|---|
 | **Layers** | Dense (fully connected), any depth |
 | **Activations** | Sigmoid, Tanh, ReLU, Identity, Step |
-| **Training** | Backpropagation, mini-batch SGD, MSE loss, shuffling |
+| **Training** | Backpropagation, mini-batch SGD, shuffling |
+| **Losses** | Mean squared error; softmax + cross-entropy for classification |
 | **Initialization** | Xavier/Glorot uniform |
 | **Model API** | Keras-style `Sequential` builder, `Summary()` |
 | **Persistence** | Versioned binary format with architecture + weights; train once, reload in ms |

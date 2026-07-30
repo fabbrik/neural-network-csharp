@@ -20,6 +20,7 @@ public sealed class Sequential
 {
     private readonly List<ILayer> _layers = [];
     private int _width;   // output width of the last layer added — the next layer's input count
+    private ILoss? _loss;
 
     /// <param name="inputs">Number of features in one input example.</param>
     public Sequential(int inputs)
@@ -45,6 +46,47 @@ public sealed class Sequential
 
         _layers.Add(new Dense<TActivation>(_width, units));
         _width = units;
+        return this;
+    }
+
+    /// <summary>
+    /// Appends a linear output layer and scores the network with softmax cross-entropy — the
+    /// standard setup for choosing among <paramref name="classes"/> mutually exclusive categories.
+    ///
+    /// <code>
+    /// var net = new Sequential(inputs: 784)
+    ///     .Dense&lt;Tanh&gt;(128)
+    ///     .SoftmaxOutput(10)      // Dense&lt;Identity&gt;(10) + SoftmaxCrossEntropy
+    ///     .Build(seed: 42);
+    /// </code>
+    ///
+    /// <para>The layer is deliberately <c>Dense&lt;Identity&gt;</c>: softmax is applied by the
+    /// loss, not the layer, because it needs every unit's value at once while an
+    /// <see cref="IActivation"/> sees one at a time. Doing both in one call is what stops anyone
+    /// from pairing cross-entropy with a squashed output layer, which would make its fused
+    /// gradient quietly wrong. See <see cref="SoftmaxCrossEntropy"/>.</para>
+    /// </summary>
+    /// <param name="classes">Number of categories, and so the number of outputs.</param>
+    public Sequential SoftmaxOutput(int classes)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(classes);
+
+        Dense<Identity>(classes);
+        _loss = SoftmaxCrossEntropy.Instance;
+
+        return this;
+    }
+
+    /// <summary>
+    /// Sets the loss explicitly. Only needed for combinations the shortcuts don't cover —
+    /// <see cref="SoftmaxOutput"/> is the usual way to get a classifier, and mean squared error
+    /// is the default otherwise.
+    /// </summary>
+    public Sequential WithLoss(ILoss loss)
+    {
+        ArgumentNullException.ThrowIfNull(loss);
+
+        _loss = loss;
         return this;
     }
 
@@ -75,7 +117,8 @@ public sealed class Sequential
             throw new InvalidOperationException("Add at least one layer before building.");
 
         // No shape check here: every layer was either constructed at the current width or
-        // validated against it by Add, so a mismatch cannot reach this point.
-        return new Network(seed, [.. _layers]);
+        // validated against it by Add, so a mismatch cannot reach this point. The loss does get
+        // checked against the output layer — see Network's constructor.
+        return new Network(seed, _loss, [.. _layers]);
     }
 }

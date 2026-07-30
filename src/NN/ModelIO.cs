@@ -6,7 +6,8 @@ namespace NN;
 /// <para><b>File format</b> (little-endian, the .NET <see cref="BinaryWriter"/> default):</para>
 /// <code>
 ///   magic     8 bytes   "NNMODEL\0"
-///   version   int32     format version (currently 1)
+///   version   int32     format version (currently 2)
+///   loss      string    version 2+ only, e.g. "mse" or "softmax-cross-entropy"
 ///   layers    int32     number of layers
 ///   per layer:
 ///     descriptor  string   length-prefixed UTF-8, e.g. "Dense&lt;Tanh&gt;"
@@ -15,6 +16,15 @@ namespace NN;
 ///     weights     float32 × (inputs × units)
 ///     biases      float32 × units
 /// </code>
+///
+/// <para>
+/// <b>Version 2 added the loss</b>, and the reason is worth stating because it is the case the
+/// version field was put there for. A softmax classifier's weights are meaningless without
+/// knowing that softmax should be applied to them: load one as though it were a plain network and
+/// it returns unbounded logits instead of probabilities. Nothing throws, `Predict` still returns
+/// ten numbers, and only their values are wrong. Version 1 files predate any choice of loss and
+/// are still read — they load as mean squared error, which is what they were.
+/// </para>
 ///
 /// <para>
 /// The architecture is stored alongside the weights, so loading needs no prior knowledge of the
@@ -31,7 +41,12 @@ namespace NN;
 public static class ModelIO
 {
     private static readonly byte[] Magic = "NNMODEL\0"u8.ToArray();
-    private const int CurrentVersion = 1;
+
+    /// <summary>What <see cref="Save(Network, string)"/> writes.</summary>
+    private const int CurrentVersion = 2;
+
+    /// <summary>Oldest version still readable. Version 1 had no loss field and means MSE.</summary>
+    private const int MinimumSupportedVersion = 1;
     private static readonly object FactoriesLock = new();
 
     /// <summary>
@@ -85,6 +100,7 @@ public static class ModelIO
 
         writer.Write(Magic);
         writer.Write(CurrentVersion);
+        writer.Write(network.LossFunction.Name);
         writer.Write(network.Layers.Count);
 
         foreach (ILayer layer in network.Layers)
@@ -113,8 +129,14 @@ public static class ModelIO
             throw new InvalidDataException("Not a model file (bad magic bytes).");
 
         int version = reader.ReadInt32();
-        if (version != CurrentVersion)
-            throw new InvalidDataException($"Model format version {version} is not supported (expected {CurrentVersion}).");
+        if (version < MinimumSupportedVersion || version > CurrentVersion)
+            throw new InvalidDataException(
+                $"Model format version {version} is not supported (this build reads " +
+                $"{MinimumSupportedVersion} to {CurrentVersion}).");
+
+        // Version 1 predates the loss field. Those files were all mean squared error, so reading
+        // them as such is not a fallback — it is exactly what they meant.
+        ILoss loss = version >= 2 ? Losses.ByNameOrThrow(reader.ReadString()) : Losses.Default;
 
         int count = reader.ReadInt32();
         if (count <= 0)
@@ -163,6 +185,6 @@ public static class ModelIO
 
         // Must skip initialization — the public constructor randomizes weights, which would
         // silently discard everything just read from the file.
-        return Network.FromTrainedLayers(layers);
+        return Network.FromTrainedLayers(layers, loss);
     }
 }

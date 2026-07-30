@@ -9,12 +9,23 @@ using NN.Mnist;
 //   dotnet run -c Release --project src/NN.Mnist -- --epochs 5      quicker
 //   dotnet run -c Release --project src/NN.Mnist -- --retrain       ignore the saved model
 //   dotnet run -c Release --project src/NN.Mnist -- --predict 42    classify one test image
+//   dotnet run -c Release --project src/NN.Mnist -- --image d.png   classify your own image
+//   dotnet run -c Release --project src/NN.Mnist -- --loss mse      the older, worse setup
 
 int epochs = ArgValue("--epochs", 20);
 int hidden = ArgValue("--hidden", 128);
 int trainLimit = ArgValue("--train", 0);   // 0 = all 60,000
 int predictIndex = ArgValue("--predict", -1);
 bool retrain = HasFlag("--retrain");
+string? imagePath = ArgPath("--image");
+
+// Softmax cross-entropy by default; --loss mse reproduces the older, worse setup for comparison.
+bool useMse = string.Equals(ArgPath("--loss"), "mse", StringComparison.OrdinalIgnoreCase);
+string lossName = useMse ? "mse" : "softmax";
+
+// MSE over sigmoid outputs needs an enormous step size to compensate for a gradient two shrinking
+// factors have already flattened; cross-entropy needs no such compensation. See below.
+float learningRate = useMse ? 1.0f : 0.1f;
 
 // Both the architecture and the training-set size go in the filename, because a saved model is
 // only interchangeable with one trained the same way. ModelIO records the architecture and would
@@ -23,9 +34,17 @@ bool retrain = HasFlag("--retrain");
 // mismatch is an error; both are silently *wrong results*, which is harder to notice.
 string modelPath = ArgPath("--model") ?? Path.Combine(
     MnistData.CacheDirectory,
-    trainLimit > 0 ? $"mnist-{hidden}-{trainLimit}.nnm" : $"mnist-{hidden}.nnm");
+    trainLimit > 0 ? $"mnist-{hidden}-{lossName}-{trainLimit}.nnm" : $"mnist-{hidden}-{lossName}.nnm");
 
 Console.WriteLine("Handwritten digit recognition — MNIST\n");
+
+// ── Reading a digit out of an image file.
+//
+//    This path deliberately runs before anything touches MNIST: classifying your own image needs
+//    the 397 KB of trained weights and nothing else. No dataset, no download, no training. That
+//    is what a saved model is for, and the repository ships one so this works on a fresh clone. ──
+if (imagePath is not null)
+    return ReadDigitFromImage(imagePath, modelPath, hidden);
 
 MnistData.Split? data = MnistData.TryLoad(trainLimit, testLimit: 0, log: Console.WriteLine);
 
@@ -90,37 +109,53 @@ if (!retrain && File.Exists(modelPath))
 }
 else
 {
-    net = new Sequential(inputs: Idx.PixelCount)
-        .Dense<Tanh>(hidden)
-        .Dense<Sigmoid>(10)
-        .Build(seed: 42);
+    // Softmax + cross-entropy is the standard classification setup; the ten-independent-sigmoids
+    // version is kept behind --loss mse purely so the two can be compared on equal terms.
+    net = useMse
+        ? new Sequential(inputs: Idx.PixelCount).Dense<Tanh>(hidden).Dense<Sigmoid>(10).Build(seed: 42)
+        : new Sequential(inputs: Idx.PixelCount).Dense<Tanh>(hidden).SoftmaxOutput(10).Build(seed: 42);
 
     trained = true;
 
     Console.WriteLine();
     Console.Write(net.Summary());
 
-    // Ten outputs, one per digit, each trained toward 1 for its own class and 0 otherwise. The
-    // prediction is the index of the largest — see Classify below.
-    Console.WriteLine($"""
+    Console.WriteLine(useMse
+        ? $"""
 
-        Ten sigmoid outputs, one per digit; the prediction is whichever fires hardest.
-        Training {epochs} epochs, batch size 32, learning rate 1.0.
+            Ten independent sigmoid outputs scored by mean squared error.
+            Training {epochs} epochs, batch size 32, learning rate {learningRate}.
 
-        That learning rate is enormous — the study guide suggests 0.1 to 0.5 — and the reason
-        is worth understanding. With MSE over sigmoid outputs the gradient carries two shrinking
-        factors: dL/da = 2(a-y)/10 divides by the ten outputs, and sigmoid's own derivative
-        a(1-a) peaks at 0.25 and collapses toward 0 as outputs saturate. The updates are so
-        small that the step size has to compensate. Softmax with cross-entropy cancels the
-        second factor exactly, which is why real classifiers use it (§25 item 3).
+            That learning rate is enormous — the study guide suggests 0.1 to 0.5 — and it is
+            compensating for a gradient that MSE-over-sigmoid has already flattened twice over:
+            dL/da = 2(a-y)/10 divides by the ten outputs, and sigmoid's own derivative a(1-a)
+            peaks at 0.25 and collapses toward 0 as outputs saturate — that is, exactly when the
+            network is confidently wrong and most needs to learn.
 
-        """);
+            Run without --loss mse to see what removing that handicap is worth.
+
+            """
+        : $"""
+
+            Softmax output with cross-entropy loss — the standard way to choose among mutually
+            exclusive categories. Training {epochs} epochs, batch size 32, learning rate {learningRate}.
+
+            Softmax turns the last layer's raw scores into a probability distribution that sums
+            to 1, so the ten digits compete rather than each answering yes/no independently.
+            Cross-entropy then scores only the probability given to the right answer.
+
+            The payoff is in the gradient. Differentiated separately, softmax gives a full
+            Jacobian and cross-entropy gives a 1/p that explodes; composed, almost everything
+            cancels and what is left is just  p - y  — prediction minus target. No vanishing
+            factor, so no need for the learning rate of 1.0 that --loss mse requires.
+
+            """);
 
     Console.WriteLine("  epoch   train loss   test acc      elapsed");
 
     clock.Restart();
 
-    net.Train(data.TrainX, data.TrainY, epochs: epochs, learningRate: 1.0f, batchSize: 32,
+    net.Train(data.TrainX, data.TrainY, epochs: epochs, learningRate: learningRate, batchSize: 32,
         onEpoch: (epoch, loss) =>
         {
             if (epoch % 5 != 0 && epoch != 1) return;
@@ -219,17 +254,24 @@ Console.WriteLine($"""
     {testAccuracy:P2} on digits it has never seen, from a network written with no ML library:
     two dense layers, backpropagation, and mini-batch gradient descent.
 
-    That is about par for this architecture — a 784-128-10 network is usually quoted around
-    98%. The remaining gap comes from the documented limits in study guide §25 rather than
-    anything mysterious:
+    {(useMse
+        ? """
+        That is short of the ~98% this architecture normally reaches, and the reason is the
+        loss rather than anything mysterious: MSE treats the digits as ten unrelated yes/no
+        questions instead of one ten-way choice, and its gradient shrinks exactly when the
+        network is confidently wrong. The learning rate of 1.0 is that weakness made visible.
 
-      * MSE loss instead of softmax + cross-entropy (§25 item 3). MSE treats the digits as
-        ten unrelated yes/no questions rather than one ten-way choice, and its gradient
-        shrinks exactly when the network is confidently wrong — precisely when it most needs
-        to learn. The learning rate of 1.0 is that weakness made visible.
-      * Plain SGD, no momentum or Adam (§25 item 2), so every step is the same size.
+        Re-run without --loss mse to see the difference. It is worth about +0.6 points, at a
+        tenth of the learning rate.
+        """
+        : """
+        That is par for this architecture, and it is what softmax with cross-entropy buys:
+        the same 784-128-10 network scored by MSE reaches only ~97.4%, and needs a learning
+        rate of 1.0 to get there rather than the 0.1 used here (try --loss mse).
 
-    Exercises 10 and 11 are those two fixes, and this is the demo to measure them on.
+        The remaining headroom is study guide §25 item 2 — plain SGD, no momentum or Adam,
+        so every step is the same size regardless of the terrain. That is exercise 10.
+        """)}
     """);
 
 Console.WriteLine(trained
@@ -252,6 +294,100 @@ Console.WriteLine(trained
 return 0;
 
 // ── Helpers ──
+
+/// <summary>
+/// Classifies a digit in an image file, using only a trained model — no dataset involved.
+/// </summary>
+static int ReadDigitFromImage(string imagePath, string preferredModel, int hidden)
+{
+    if (!File.Exists(imagePath))
+    {
+        Console.Error.WriteLine($"No such image: {imagePath}");
+        return 1;
+    }
+
+    // Prefer a model this machine trained; fall back to the one checked into the repository.
+    string shipped = Path.Combine(AppContext.BaseDirectory, "mnist-784-128-10.nnm");
+    string model = File.Exists(preferredModel) ? preferredModel : shipped;
+
+    if (!File.Exists(model))
+    {
+        Console.Error.WriteLine($"No trained model found at {preferredModel} or {shipped}.");
+        return 1;
+    }
+
+    Network net = ModelIO.Load(model);
+    Console.WriteLine($"Model:  {model}\nImage:  {imagePath}\n");
+
+    GreyImage image;
+
+    try
+    {
+        image = ImageFile.Load(imagePath);
+    }
+    catch (Exception e) when (e is NotSupportedException or InvalidDataException)
+    {
+        Console.Error.WriteLine($"Could not read the image: {e.Message}");
+        return 1;
+    }
+
+    // The whole point of DigitPreprocessor: a network trained on MNIST has learned MNIST's
+    // conventions, not "digits". See its class comment for what those are and why.
+    float[] pixels = DigitPreprocessor.ToMnist(image);
+
+    Console.WriteLine($"  {image.Width}x{image.Height} image, normalized to MNIST's 28x28 convention:\n");
+    Console.Write(RenderPixels(pixels));
+
+    ReadOnlySpan<float> output = net.Predict(pixels);
+
+    int best = 0, runnerUp = -1;
+    for (int d = 1; d < output.Length; d++)
+        if (output[d] > output[best]) best = d;
+
+    for (int d = 0; d < output.Length; d++)
+        if (d != best && (runnerUp < 0 || output[d] > output[runnerUp])) runnerUp = d;
+
+    Console.WriteLine($"\n  This is a {best}.  (confidence {output[best]:F3})\n");
+
+    for (int d = 0; d < 10; d++)
+        Console.WriteLine($"    {d}  {output[d]:F3}  {new string('█', (int)(output[d] * 40))}");
+
+    // A low winner, or a close second, usually means the preprocessing went wrong rather than
+    // that the network is confused — an off-centre or inverted digit produces exactly this.
+    if (output[best] < 0.5f || output[runnerUp] > output[best] * 0.5f)
+        Console.WriteLine($"""
+
+              Not a confident answer ({best} at {output[best]:F2}, then {runnerUp} at {output[runnerUp]:F2}).
+              Check the 28x28 rendering above: the digit should be white on black, filling most
+              of the frame. If it looks inverted or tiny, the input needed different preparation
+              rather than the network needing more training.
+            """);
+
+    return 0;
+}
+
+/// <summary>Draws an already-normalized 784-float MNIST image.</summary>
+static string RenderPixels(float[] pixels)
+{
+    const string Ramp = " .:-=+*#%@";
+
+    var sb = new System.Text.StringBuilder();
+
+    for (int row = 0; row < Idx.ImageSize; row++)
+    {
+        sb.Append("    ");
+
+        for (int column = 0; column < Idx.ImageSize; column++)
+        {
+            char c = Ramp[Math.Clamp((int)(pixels[row * Idx.ImageSize + column] * Ramp.Length), 0, Ramp.Length - 1)];
+            sb.Append(c).Append(c);
+        }
+
+        sb.AppendLine();
+    }
+
+    return sb.ToString();
+}
 
 /// <summary>
 /// Writes the trained model, reloads it, and proves the reload is exact.
