@@ -61,12 +61,6 @@ public sealed class Dense<TActivation> : ILayer where TActivation : IActivation
     /// <summary>Weights of unit <paramref name="j"/>, as a contiguous window into the flat array.</summary>
     public Span<float> UnitWeights(int j) => Weights.AsSpan(j * Inputs, Inputs);
 
-    /// <summary>Accumulated dL/dW, same layout as <see cref="Weights"/>. Exposed for gradient checking.</summary>
-    public ReadOnlySpan<float> WeightGradients => _weightGrads;
-
-    /// <summary>Accumulated dL/db. Exposed for gradient checking.</summary>
-    public ReadOnlySpan<float> BiasGradients => _biasGrads;
-
     /// <summary>
     /// Xavier/Glorot uniform initialization: weights drawn from ±sqrt(6 / (fan_in + fan_out)),
     /// which keeps activation variance roughly stable as signals move through the stack.
@@ -211,7 +205,4 @@ public sealed class Dense<TActivation> : ILayer where TActivation : IActivation
         for (int i = 0; i < Bias.Length; i++) Bias[i] = reader.ReadSingle();
     }
 
-    /// <summary>Dot product. Kept for callers that used it directly; forwards to <see cref="SimdOps"/>.</summary>
-    [MethodImpl(MethodImplOptions.AggressiveInlining)]
-    internal static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b) => SimdOps.Dot(a, b);
 }

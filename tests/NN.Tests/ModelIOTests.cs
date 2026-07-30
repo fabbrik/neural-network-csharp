@@ -97,6 +97,58 @@ public class ModelIOTests
         }
     }
 
+    /// <summary>
+    /// An unregistered layer type must be reported by name rather than producing a confusing
+    /// failure — the file is well-formed, the running code simply doesn't know the type.
+    /// </summary>
+    [Fact]
+    public void Loading_an_unregistered_layer_type_names_the_offender()
+    {
+        var net = new Network(1, new Dense<NeverRegistered>(2, 2));
+
+        using var stream = new MemoryStream();
+        ModelIO.Save(net, stream);
+        stream.Position = 0;
+
+        var ex = Assert.Throws<InvalidDataException>(() => ModelIO.Load(stream));
+        Assert.Contains("Dense<NeverRegistered>", ex.Message);
+    }
+
+    [Fact]
+    public void A_registered_custom_layer_type_round_trips()
+    {
+        ModelIO.Register("Dense<Registered>", (i, u) => new Dense<Registered>(i, u));
+
+        var net = new Network(1, new Dense<Registered>(2, 2));
+
+        using var stream = new MemoryStream();
+        ModelIO.Save(net, stream);
+        stream.Position = 0;
+        Network loaded = ModelIO.Load(stream);
+
+        Assert.Equal("Dense<Registered>", loaded.Layers[0].Descriptor);
+
+        for (int p = 0; p < net.Layers[0].ParameterCount; p++)
+            Assert.Equal(net.Layers[0].GetParameter(p), loaded.Layers[0].GetParameter(p));
+    }
+
+    // Two distinct types on purpose. ModelIO.Register mutates a static table, so sharing one type
+    // between these tests would make the "unregistered" case fail whenever xUnit happened to run
+    // the registration test first — order within a class is not guaranteed.
+
+    /// <summary>Deliberately never passed to <see cref="ModelIO.Register"/>.</summary>
+    private readonly struct NeverRegistered : IActivation
+    {
+        public static float Apply(float z) => z * 0.5f;
+        public static float DerivativeFromOutput(float a) => 0.5f;
+    }
+
+    private readonly struct Registered : IActivation
+    {
+        public static float Apply(float z) => z * 0.5f;
+        public static float DerivativeFromOutput(float a) => 0.5f;
+    }
+
     [Fact]
     public void Loading_a_non_model_file_fails_with_a_clear_message()
     {

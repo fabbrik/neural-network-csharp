@@ -98,24 +98,13 @@ public sealed class Network
         sb.AppendLine(rule);
 
         foreach (ILayer layer in _layers)
-            sb.AppendLine($"{DescribeType(layer),-24}{layer.Units,8}{layer.ParameterCount,10}");
+            sb.AppendLine($"{layer.Descriptor,-24}{layer.Units,8}{layer.ParameterCount,10}");
 
         sb.AppendLine(rule);
         sb.AppendLine($"Input width: {Inputs}");
         sb.AppendLine($"Trainable parameters: {ParameterCount}");
 
         return sb.ToString();
-    }
-
-    /// <summary>Renders <c>Dense`1[Tanh]</c> as the readable <c>Dense&lt;Tanh&gt;</c>.</summary>
-    private static string DescribeType(ILayer layer)
-    {
-        Type t = layer.GetType();
-        if (!t.IsGenericType) return t.Name;
-
-        string name = t.Name[..t.Name.IndexOf('`')];
-        string args = string.Join(", ", Array.ConvertAll(t.GetGenericArguments(), a => a.Name));
-        return $"{name}<{args}>";
     }
 
     /// <summary>Clears accumulated gradients in every layer.</summary>

@@ -50,6 +50,26 @@ public class DenseTests
     }
 
     [Fact]
+    public void ForwardBatch_matches_forwarding_each_example_individually()
+    {
+        var layer = new Dense<Tanh>(inputs: 2, units: 3);
+        layer.Initialize(new Random(42));
+
+        float[] batch = [0f, 0f, 0f, 1f, 1f, 0f, 1f, 1f];
+        var actual = new float[4 * 3];
+
+        layer.ForwardBatch(batch, actual, count: 4);
+
+        for (int i = 0; i < 4; i++)
+        {
+            float[] expected = layer.Forward(batch.AsSpan(i * 2, 2));
+
+            for (int j = 0; j < 3; j++)
+                Assert.Equal(expected[j], actual[i * 3 + j]);
+        }
+    }
+
+    [Fact]
     public void Forward_rejects_a_wrongly_sized_input()
     {
         var layer = new Dense<Tanh>(inputs: 3, units: 2);

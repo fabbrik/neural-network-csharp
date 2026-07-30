@@ -63,19 +63,4 @@ internal static class SimdOps
             dest[i] += src[i] * scale;
     }
 
-    /// <summary>In-place <c>dest *= scale</c>.</summary>
-    public static void Scale(Span<float> dest, float scale)
-    {
-        int width = Vector<float>.Count;
-        int n = dest.Length;
-        int i = 0;
-
-        var vScale = new Vector<float>(scale);
-
-        for (; i <= n - width; i += width)
-            (new Vector<float>(dest.Slice(i, width)) * vScale).CopyTo(dest.Slice(i, width));
-
-        for (; i < n; i++)
-            dest[i] *= scale;
-    }
 }

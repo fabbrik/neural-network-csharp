@@ -19,7 +19,6 @@ namespace NN;
 public sealed class Sequential
 {
     private readonly List<ILayer> _layers = [];
-    private readonly int _inputs;
     private int _width;   // output width of the last layer added — the next layer's input count
 
     /// <param name="inputs">Number of features in one input example.</param>
@@ -27,7 +26,6 @@ public sealed class Sequential
     {
         ArgumentOutOfRangeException.ThrowIfNegativeOrZero(inputs);
 
-        _inputs = inputs;
         _width = inputs;
     }
 
@@ -76,10 +74,8 @@ public sealed class Sequential
         if (_layers.Count == 0)
             throw new InvalidOperationException("Add at least one layer before building.");
 
-        if (_layers[0].Inputs != _inputs)
-            throw new InvalidOperationException(
-                $"First layer takes {_layers[0].Inputs} inputs but the model was declared with {_inputs}.");
-
+        // No shape check here: every layer was either constructed at the current width or
+        // validated against it by Add, so a mismatch cannot reach this point.
         return new Network(seed, [.. _layers]);
     }
 }
