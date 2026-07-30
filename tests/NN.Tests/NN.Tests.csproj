@@ -18,6 +18,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../../src/NN/NN.csproj" />
+    <ProjectReference Include="..\..\src\NN.Mnist\NN.Mnist.csproj" />
   </ItemGroup>
 
 </Project>

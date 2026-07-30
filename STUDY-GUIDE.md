@@ -22,6 +22,7 @@ backpropagation, which is the one concept everything else depends on.
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Finite-difference verification of the backward pass |
 | [`Datasets.cs`](src/NN/Datasets.cs) | Generated two-moons data, for train/test experiments |
 | [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptron, XOR, save/load, gradient check, two moons |
+| [`NN.Mnist/`](src/NN.Mnist/) | Handwritten digit recognition: IDX reader, dataset cache, the demo |
 | [`bench/`](bench/README.md) | Benchmarks behind every performance claim below |
 
 ---
@@ -288,7 +289,7 @@ $$\frac{\partial L}{\partial a_j} = \frac{2(a_j - y_j)}{m}$$
 Sensible: if prediction exceeds target, the derivative is positive, meaning "lower this output."
 
 MSE is the natural choice for regression (predicting numbers). For classification,
-**cross-entropy** is better — see §25 item 3 and exercise 9.
+**cross-entropy** is better — see §25 item 3 and exercise 11.
 
 ---
 
@@ -1513,6 +1514,66 @@ The important part is what it took to see it. Training loss fell the whole way; 
 the model looked *better* by every number available at training time. **Only the held-out split
 made it visible**, and nothing in this library computes one for you — §25 item 6.
 
+### Handwritten digits — the real thing
+
+`dotnet run -c Release --project src/NN.Mnist` trains on MNIST: 60,000 handwritten digits, 28×28
+greyscale, the dataset every introduction eventually arrives at. The jump in scale from the moons
+is the point — 784 inputs instead of 2, and 101,770 parameters instead of 337.
+
+Architecture: **784 → 128 tanh → 10 sigmoid**, one output per digit, trained on one-hot targets.
+The prediction is whichever output fires hardest.
+
+```
+  epoch   train loss   test acc      elapsed
+      1      0.02343    91.87%        2.1s
+     10      0.00573    96.55%       18.3s
+     20      0.00352    97.41%       36.4s
+
+  Final: train 98.45%, test 97.41%, 37.3s total
+```
+
+**97.41% on digits it has never seen, in 37 seconds**, from the code in this guide. Two seconds
+per epoch over 60,000 examples — the SIMD and layout work of §12 and §15 is finally operating at a
+size where it matters, which is also why the benchmarks measure a 784×128 layer.
+
+Three things this demo teaches that nothing smaller can:
+
+**Accuracy hides structure; a confusion matrix shows it.** The errors are not spread evenly:
+
+```
+             0     1     2     3     4     5     6     7     8     9    accuracy
+    1        ·  1123     3     1     ·     1     3     1     3     ·      98.9%
+    4        1     ·     1     1   956     ·     6     3     2    12      97.4%
+    7        ·    10    14     2     ·     ·     ·   989     2    11      96.2%
+```
+
+Ones are nearly perfect; sevens are the worst class, and their errors go mostly to 1, 2 and 9 —
+digits that genuinely share strokes with a 7. The network's mistakes are *structured*, and the
+demo prints the misclassified digits as ASCII so you can see that most are ones a person would
+also hesitate over.
+
+**A learning rate of 1.0 is required, and that is a diagnosis.** The guide recommends 0.1–0.5
+(§4). This demo needs 1.0, and the reason is the gradient arriving too weak:
+
+$$\frac{\partial L}{\partial a} = \frac{2(a-y)}{10} \quad\text{then}\quad \times\, \sigma'(z) = a(1-a) \le 0.25$$
+
+Dividing by ten outputs, then multiplying by a factor that peaks at 0.25 and collapses toward zero
+as outputs saturate. The step size has to compensate for a gradient that MSE-over-sigmoid made
+small. Cross-entropy with a softmax output cancels the `σ'(z)` factor **exactly** — that
+cancellation is the whole reason classifiers use it, and here you can watch its absence.
+
+**The library's documented limits become measurable rather than theoretical.** 97.4% is about par
+for this architecture; the ~98% usually quoted needs cross-entropy and a better optimizer. §25
+items 2 and 3 are no longer caveats in a list — they are a 0.6-point gap and a chunk of those 37
+seconds, and exercises 10 and 11 are where you close them.
+
+> The dataset is not in the repository. The demo downloads it once (~11 MB) and caches it outside
+> the working tree; later runs, including offline ones, read the cache. With neither network nor
+> cache it says so and exits cleanly — a teaching repo should not fail because a mirror is down.
+> The IDX format it parses is worth a look ([`Idx.cs`](src/NN.Mnist/Idx.cs)): a magic number, some
+> dimensions, and raw bytes — **big-endian**, which is the one detail that silently ruins
+> everything if you miss it.
+
 ---
 
 ## 23. Debugging playbook
@@ -1567,18 +1628,25 @@ Worked roughly in order of value. The "break it" ones teach the most.
    at fixed capacity and watch the train/test gap close. Then hold the data at 20 and shrink the
    network instead. Two different cures for the same disease.
 10. **Add momentum:** keep a velocity buffer per layer, `v = βv + grad` (β ≈ 0.9), and step along
-    `v`. Compare convergence speed on the moons, where there's enough training time to measure.
+    `v`. Measure it on MNIST, where the baseline is **97.41% in 37 s** (§22) — a number concrete
+    enough to beat or fail to beat.
 11. **Add cross-entropy loss.** For classification it beats MSE: with a sigmoid output the
     `σ'(z)` factor cancels against the loss derivative, removing the slowdown that occurs when
-    the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient).
-12. **Break the forward cache on purpose.** Make `Forward` cache again (§14) and call
+    the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient). The MNIST demo
+    is the proof: it needs a learning rate of 1.0 purely to compensate for that missing
+    cancellation. If your version trains at 0.1 and still beats 97.41%, you've done it right.
+12. **Look at what MNIST gets wrong.** The demo prints its own misclassified digits. Are they
+    genuinely ambiguous, or is the network failing on something a person would find easy? Then
+    read the confusion matrix: which pairs does it mix up, and do those digits share strokes?
+    This is the habit that separates "96%" from knowing what a model actually does.
+13. **Break the forward cache on purpose.** Make `Forward` cache again (§14) and call
     `net.Predict(...)` between `AccumulateGradients` and `ApplyGradients`. Nothing throws, loss
     still falls, and the network trains on the wrong example. Then run `CacheLifetimeTests` and
     watch them catch it. The best available demonstration of why "it still trains" proves nothing.
-13. **Implement `ForwardBatch` as a real tiled GEMM** (§25 item 1) and benchmark it against the
+14. **Implement `ForwardBatch` as a real tiled GEMM** (§25 item 1) and benchmark it against the
     existing null result in [`bench/`](bench/README.md). This is the largest measured win still on
     the table.
-14. **Re-run the benchmarks on your own machine.** If it's x86, `Vector<float>` is 8 or 16 wide
+15. **Re-run the benchmarks on your own machine.** If it's x86, `Vector<float>` is 8 or 16 wide
     rather than 4. Which conclusions in [`bench/README.md`](bench/README.md) change, and which
     hold? The ones that hold are the ones worth trusting.
 
@@ -1600,10 +1668,12 @@ Honest limits, ordered by how much they cost:
    ([table](bench/README.md#4-forwardbatch--a-deliberate-null-result)). The 2% is loop overhead
    the caller no longer pays, not arithmetic. The *other* half — that a real tiled GEMM would
    dominate every other optimization here — remains unmeasured, because it remains unwritten.
-   That is exercise 10, and it is still the largest single win available.
+   That is exercise 14, and it is still the largest single win available.
 2. **Plain SGD.** No momentum, Adam, learning-rate schedule, or weight decay. Adam typically
-   converges several times faster.
-3. **MSE only.** Cross-entropy is the right loss for classification (exercise 9).
+   converges several times faster — measurable now against MNIST's 97.41% in 37 s (§22).
+3. **MSE only.** Cross-entropy is the right loss for classification (exercise 11), and §22's MNIST
+   run puts a price on its absence: a learning rate of 1.0 is needed purely to compensate for the
+   `σ'(z)` factor that cross-entropy would cancel.
 4. **Single-threaded.** No `Parallel.For` over units or batch rows.
 5. **No explicit FMA.** `acc += a * b` may or may not fuse into one instruction;
    `Vector256.FusedMultiplyAdd` guarantees it, at the cost of writing a separate ARM path.
@@ -1627,9 +1697,13 @@ understanding, and at this scale it will never be your bottleneck.
 
 Roughly in order:
 
-1. **Cross-entropy loss + softmax output** — the standard classification setup.
-2. **A real dataset.** MNIST (28×28 handwritten digits) is the classic first one: a
-   784 → 128 → 10 network trains in minutes and gets ~97%.
+1. **Cross-entropy loss + softmax output** — the standard classification setup, and the single
+   biggest improvement available to this codebase. §22's MNIST run shows exactly what its absence
+   costs: a learning rate of 1.0 to compensate for a gradient MSE made weak.
+2. **A real dataset — already here.** MNIST is the classic first one, and
+   [`src/NN.Mnist`](src/NN.Mnist/) trains a 784 → 128 → 10 network on it to 97.4% in 37 seconds.
+   The next step up is Fashion-MNIST (same shape and loader, harder problem) or CIFAR-10 (colour,
+   and genuinely wants convolution).
 3. **Momentum, then Adam.**
 4. **Regularization** — dropout, weight decay — once you can overfit something.
 5. **Convolutional layers**, if images interest you.

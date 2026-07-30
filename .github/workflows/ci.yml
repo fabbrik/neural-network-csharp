@@ -36,6 +36,13 @@ jobs:
       - name: Run the demo
         run: dotnet run --no-build --configuration Release --project src/NN.Demo
 
+      # A smoke test of the whole MNIST path — download, IDX parsing, training, reporting —
+      # cut down to one epoch on 5000 images so it costs seconds rather than a minute.
+      # If the mirrors are unreachable the demo reports that and exits 0 by design, so a
+      # dataset outage cannot turn into a red build.
+      - name: Run the MNIST demo (smoke test)
+        run: dotnet run --no-build --configuration Release --project src/NN.Mnist -- --epochs 1 --train 5000
+
       # Built, not run. Benchmark timings from shared cloud runners are noise, but an
       # unbuilt benchmark project silently rots against the library it measures.
       - name: Build the benchmarks

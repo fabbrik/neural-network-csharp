@@ -106,10 +106,11 @@ single-example path. Testing your own negative claims is the only way they stay 
 between rows — under .NET 9 all three read 0.98×, here two read slightly *slower*. The 256-row
 baseline also carried a ±80 µs standard error against a 802 µs mean, so its 0.95× is measurement
 noise rather than a win. Nothing here is a real effect in either direction, which is exactly the
-claim. A
-real tiled GEMM — reusing each loaded weight block across many examples instead of re-streaming
+claim.
+
+A real tiled GEMM — reusing each loaded weight block across many examples instead of re-streaming
 the whole matrix per example — is where the batching win lives, and it remains unimplemented. See
-study guide §25 item 1 and exercise 10.
+study guide §25 item 1 and exercise 14.
 
 ## What is not measured here
 

@@ -47,6 +47,7 @@ now [partially confirm](bench/README.md#4-forwardbatch--a-deliberate-null-result
 
 ```bash
 dotnet run --project src/NN.Demo      # perceptron, XOR, save/load, gradient check, two moons
+dotnet run -c Release --project src/NN.Mnist   # handwritten digit recognition (~40 s)
 dotnet test                           # the full suite
 dotnet run -c Release --project bench/NN.Bench -- --filter '*'   # benchmarks
 ```
@@ -105,6 +106,55 @@ Overfitting: same problem, 20 training points, a much larger network
 > move on other hardware; expect the conclusions not to. CI deliberately runs on both
 > architectures.
 
+## Reading handwritten digits
+
+A separate demo trains on [MNIST](src/NN.Mnist/) — 60,000 handwritten digits, 784 inputs, 101,770
+parameters. **97.4% on digits it has never seen, in 37 seconds**, from two dense layers and
+backpropagation:
+
+```
+A training example (label 5):
+              ==++**..**@@@@==
+    ....--****@@@@@@@@@@%%**@@@@##::
+  ..@@@@@@@@@@@@@@@@@@@@------::..
+    %%@@@@@@@@@@####@@@@
+          **@@--
+            ##@@::
+              --@@@@@@==
+                    @@@@@@::
+            ..++%%@@@@@@@@##
+      ::%%@@@@@@@@##--
+  **%%@@@@@@@@##--
+
+  epoch   train loss   test acc      elapsed
+      1      0.02343    91.87%        2.1s
+     10      0.00573    96.55%       18.3s
+     20      0.00352    97.41%       36.4s
+
+Confusion matrix — rows are the true digit, columns the prediction:
+
+             0     1     2     3     4     5     6     7     8     9    accuracy
+    0      969     ·     ·     1     ·     3     3     1     2     1      98.9%
+    1        ·  1123     3     1     ·     1     3     1     3     ·      98.9%
+    4        1     ·     1     1   956     ·     6     3     2    12      97.4%
+    7        ·    10    14     2     ·     ·     ·   989     2    11      96.2%
+```
+
+It then prints the digits it got **wrong**, which is the more honest picture of "97%" than the
+number is — most are ambiguous enough that a person would hesitate too.
+
+The dataset is not in this repository. The demo downloads it once (~11 MB) and caches it outside
+the working tree; every later run, including offline ones, reads the cache. With no network and no
+cache it explains that and exits cleanly rather than failing — so `dotnet test` and the other demo
+never depend on a dataset mirror being up.
+
+That 97.4% is roughly par for the architecture, and the gap to the ~98% usually quoted is
+*explained by the library's documented limits, not by mystery*: MSE instead of softmax +
+cross-entropy, and plain SGD with no momentum. The demo needs a learning rate of **1.0** — far
+above the 0.1–0.5 the study guide recommends — and that is the MSE-over-sigmoid gradient being
+visibly weak. Study-guide exercises 10 and 11 are those two fixes, with 97.4% in 37 s as the
+number to beat.
+
 ## What's implemented
 
 | | |
@@ -116,7 +166,7 @@ Overfitting: same problem, 20 training points, a much larger network
 | **Model API** | Keras-style `Sequential` builder, `Summary()` |
 | **Persistence** | Versioned binary format with architecture + weights |
 | **Verification** | Finite-difference gradient checking |
-| **Data** | Generated two-moons dataset for train/test experiments |
+| **Data** | Generated two-moons dataset; MNIST loader (IDX format, download + cache) |
 
 ## Design notes
 
@@ -169,7 +219,8 @@ custom layer types during start-up is still clearer than letting load behavior d
 
 ```
 src/NN/           the library
-src/NN.Demo/      runnable demonstration
+src/NN.Demo/      runnable demonstration — perceptron, XOR, two moons
+src/NN.Mnist/     handwritten digit recognition, with an IDX reader and dataset cache
 tests/NN.Tests/   the test suite
 bench/NN.Bench/   benchmarks, with results in bench/README.md
 STUDY-GUIDE.md    the long-form explanation
