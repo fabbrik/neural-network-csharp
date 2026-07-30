@@ -18,9 +18,9 @@ depende todo lo demás.
 >
 > **Sobre términos técnicos.** Esta guía evita traducir literalmente términos que programadores y
 > estudiantes de IA suelen conocer en inglés. Por eso verás `forward pass`, `backward pass`,
-> `backpropagation`, `mini-batch`, `learning rate`, `dataset`, `benchmark`, `buffer`, `cache`,
-> `logit`, `softmax` y `one-hot`. Cuando el español ayuda, aparece como explicación, no como
-> reemplazo forzado.
+> `backpropagation`, `mini-batch`, `learning rate`, `dataset`, `features`, `benchmark`, `buffer`,
+> `cache`, `logit`, `softmax`, `cross-entropy` y `one-hot`. Cuando el español ayuda, aparece como
+> explicación, no como reemplazo forzado.
 
 | Archivo | Contenido |
 |---|---|
@@ -31,13 +31,13 @@ depende todo lo demás.
 | [`ILayer.cs`](src/NN/ILayer.cs) | Interfaz de capa no genérica, para que una red mezcle tipos de activación |
 | [`Network.cs`](src/NN/Network.cs) | Pila de capas, bucle de entrenamiento con SGD por mini-batches, `Summary()` |
 | [`Sequential.cs`](src/NN/Sequential.cs) | Constructor fluido estilo Keras con inferencia del tamaño de entrada |
-| [`Loss.cs`](src/NN/Loss.cs) | `ILoss`, error cuadrático medio y softmax con entropía cruzada |
+| [`Loss.cs`](src/NN/Loss.cs) | `ILoss`, MSE y softmax con cross-entropy |
 | [`ModelIO.cs`](src/NN/ModelIO.cs) | Guardado y carga de modelos entrenados |
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Verificación de backpropagation por diferencias finitas |
 | [`Datasets.cs`](src/NN/Datasets.cs) | Dataset «dos lunas» generado, para experimentos train/test |
 | [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptrón, XOR, guardar/cargar, gradiente, dos lunas |
 | [`Idx.cs`](src/NN.Mnist/Idx.cs) | Lector del formato IDX de MNIST (big-endian, etiquetas one-hot) |
-| [`MnistData.cs`](src/NN.Mnist/MnistData.cs) | Descarga MNIST y lo guarda en caché; se omite limpiamente sin conexión |
+| [`MnistData.cs`](src/NN.Mnist/MnistData.cs) | Descarga MNIST, guarda el dataset en cache y se salta la demo limpiamente si no hay conexión |
 | [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) | Decodificación de PNG y Netpbm, sin dependencias |
 | [`DigitPreprocessor.cs`](src/NN.Mnist/DigitPreprocessor.cs) | Lleva cualquier imagen a las convenciones de MNIST — §22 |
 | [`NN.Mnist/Program.cs`](src/NN.Mnist/Program.cs) | El reconocedor de dígitos: entrenar, evaluar, leer una imagen |
@@ -82,7 +82,7 @@ depende todo lo demás.
 24. [Ejercicios](#24-ejercicios)
 25. [Lo que esta implementación *no* hace](#25-lo-que-esta-implementación-no-hace)
 26. [Hacia dónde seguir](#26-hacia-dónde-seguir)
-27. [Softmax y entropía cruzada](#27-softmax-y-entropía-cruzada)
+27. [Softmax y cross-entropy](#27-softmax-y-cross-entropy)
 28. [Glosario](#glosario)
 
 > **Si solo vas a leer tres secciones:** §7 y §8 (backpropagation resuelto a mano) y §21 (cómo
@@ -116,7 +116,7 @@ Quieres una función que reproduzca esta correspondencia — y, más importante,
 entradas que no ha visto. No conoces la fórmula. Así que en lugar de escribir una:
 
 1. Construyes una función con **miles de números ajustables** dentro (los *parámetros*).
-2. Defines una puntuación de cuán equivocadas están sus salidas (la *pérdida*).
+2. Defines una medida de cuán equivocadas están sus salidas (la *pérdida*).
 3. Averiguas, para cada parámetro, en qué dirección moverlo para reducir la pérdida.
 4. Los mueves todos un poco en esa dirección, y repites.
 
@@ -206,7 +206,7 @@ Esa es exactamente la red XOR de [`Program.cs`](src/NN.Demo/Program.cs).
   fluye de derecha a izquierda en el **backward pass**.
 
 **¿Qué aprenden realmente las unidades ocultas?** Nadie les asigna un trabajo. El entrenamiento
-descubre que cierta característica intermedia es útil y una unidad deriva hacia calcularla. Ese es
+descubre que cierta característica intermedia es útil y una unidad acaba calculándola. Ese es
 el trato que ofrece la profundidad: **aprender representaciones intermedias útiles, y luego
 resolver un problema fácil sobre ellas.**
 
@@ -300,7 +300,7 @@ pequeños y por qué el proceso es iterativo en lugar de resolverse de un tirón
 
 La pérdida convierte «cuán equivocada estaba esta predicción» en un único número a minimizar.
 
-**Error cuadrático medio (MSE)**, el que usa esta implementación por defecto:
+**MSE (error cuadrático medio)**, el que usa esta implementación por defecto:
 
 $$L = \frac{1}{m}\sum_j (a_j - y_j)^2$$
 
@@ -315,8 +315,8 @@ $$\frac{\partial L}{\partial a_j} = \frac{2(a_j - y_j)}{m}$$
 Razonable: si la predicción supera al objetivo, la derivada es positiva, lo que significa «baja
 esta salida».
 
-MSE es la elección natural para regresión (predecir números). Para clasificación, la **entropía
-cruzada** es mejor, y este código la implementa — véase §27.
+MSE es la elección natural para regresión (predecir números). Para clasificación, la
+**cross-entropy** es mejor, y este código la implementa — véase §27.
 
 ---
 
@@ -360,7 +360,7 @@ predicción, así que no recibe culpa ni actualización.
 
 ## 7. Ejemplo resuelto: una neurona, a mano
 
-Hagamos una pasada completa hacia adelante y hacia atrás con números reales. *Estos valores están
+Hagamos un `forward pass` y un `backward pass` completos con números reales. *Estos valores están
 calculados y verificados — sigue el hilo con una calculadora.*
 
 **Planteamiento.** Una neurona, dos entradas, activación sigmoide.
@@ -378,7 +378,7 @@ learning rate   η = 0.5
 > eso los ejemplos de abajo usan simplemente `2(a - y)` — no están omitiendo un término, es que `m`
 > resulta ser 1. El código de [`Network.cs`](src/NN/Network.cs) siempre divide correctamente.
 
-### Pasada hacia adelante
+### Forward pass
 
 **Suma ponderada:**
 
@@ -402,7 +402,7 @@ L = (a - y)² = (0.574443 - 1.0)² = (-0.425557)² = 0.181099
 
 La red predijo 0,574 donde se quería 1,0. Ahora lo corregimos.
 
-### Pasada hacia atrás
+### Backward pass
 
 **Paso 1 — ¿cómo cambia la pérdida con la salida?**
 
@@ -413,7 +413,8 @@ dL/da = 2(a - y) = 2 × (0.574443 - 1.0) = -0.851115
 Negativa, lo que significa: *aumentar `a` reduciría la pérdida.* Correcto — queremos que `a` crezca
 hacia 1,0.
 
-**Paso 2 — empujar hacia atrás a través de la activación.** La derivada de la sigmoide es `a(1-a)`:
+**Paso 2 — propagar el gradiente hacia atrás a través de la activación.** La derivada de la sigmoide
+es `a(1-a)`:
 
 ```
 g'(z) = a(1 - a) = 0.574443 × 0.425557 = 0.244458
@@ -468,7 +469,7 @@ ejemplo, miles de veces.
 ## 8. Ejemplo resuelto: la cadena a través de dos capas
 
 Lo anterior trataba una sola capa. La idea nueva y esencial en una red *profunda* es propagar el
-gradiente **hacia atrás, a la capa anterior**. Aquí está el caso más pequeño posible, también
+gradiente **hacia la capa anterior**. Aquí está el caso más pequeño posible, también
 verificado.
 
 **Planteamiento.** Una entrada → una unidad oculta tanh → una unidad de salida sigmoide.
@@ -504,8 +505,8 @@ dL/db₂ = delta₂                            = 0.267821
 
 ### Hacia atrás — ahora cruzamos a la capa oculta
 
-**Este es el paso que lo convierte en «backpropagation».** La unidad oculta influyó en la pérdida
-solo *a través de* la unidad de salida, así que encaminamos el gradiente de vuelta por el peso que
+**Este es el paso que lo convierte en `backpropagation`.** La unidad oculta influyó en la pérdida
+solo *a través de* la unidad de salida, así que enviamos el gradiente de vuelta por el peso que
 las conecta, `w₂`:
 
 ```
@@ -513,8 +514,8 @@ dL/dh = delta₂ × w₂ = 0.267821 × 1.2 = 0.321386
 ```
 
 Léelo así: *«la salida de la unidad oculta afecta a la pérdida en δ₂ escalado por la fuerza de la
-conexión que la llevaba hacia adelante».* El mismo peso `w₂` que llevaba la señal **hacia adelante**
-ahora lleva la culpa **hacia atrás**. Esa simetría es el corazón del algoritmo.
+conexión usada durante el `forward pass`».* El mismo peso `w₂` que lleva la señal hacia adelante
+lleva ahora el gradiente hacia atrás. Esa simetría es el corazón del algoritmo.
 
 Después es la receta idéntica a la anterior, una capa más abajo:
 
@@ -533,7 +534,7 @@ Cada capa, sin excepción, hace:
 1. Recibir `dL/da` de arriba (o de la pérdida, si es la última capa).
 2. `δ = dL/da × g'(z)` — empujar a través de la activación.
 3. `dL/dW += δ × entrada`, `dL/db += δ` — registrar los gradientes de los parámetros.
-4. `dL/dentrada = δ × W` — entregar hacia atrás a la capa de abajo, que vuelve al paso 1.
+4. `dL/dentrada = δ × W` — entregar el gradiente a la capa anterior, que vuelve al paso 1.
 
 **Con 2 capas o con 200, ese bucle es todo el algoritmo.** [`Dense.Backward`](src/NN/Dense.cs) es
 una transcripción literal de esas cuatro líneas.
@@ -542,7 +543,7 @@ una transcripción literal de esas cuatro líneas.
 
 De forma ingenua podrías calcular el gradiente de cada peso por separado reejecutando la red — con
 un millón de pesos, eso es un millón de forward passes. Backpropagation calcula
-**todos** los gradientes en un único barrido hacia atrás reutilizando los valores δ compartidos.
+**todos** los gradientes en un único `backward pass` reutilizando los valores δ compartidos.
 Cuesta aproximadamente lo mismo que un forward pass. Esa eficiencia es la razón por la
 que las redes neuronales son entrenables siquiera, y por la que la popularización de la
 backpropagation en 1986 relanzó todo el campo.
@@ -651,8 +652,8 @@ La alternativa obvia es un campo `Func<float, float>`. Cuesta una llamada indire
 de cada capa de cada ejemplo, y el JIT no puede integrarla dentro del bucle.
 
 > **Un borrador anterior de esta guía te decía que eso la hacía más lenta. No lo hace, y la
-> corrección es más instructiva que la afirmación original.** Comparada mediante una prueba de
-> rendimiento con una capa que usa delegados, la versión genérica es más rápida entre un 0 y un
+> corrección es más instructiva que la afirmación original.** Comparada mediante un benchmark
+> con una capa que usa delegados, la versión genérica es más rápida entre un 0 y un
 > 6 % — ruido a cualquier tamaño realista
 > ([tabla completa](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong)).
 >
@@ -719,13 +720,13 @@ Los pesos de la unidad `j` son `Weights[j * Inputs .. (j+1) * Inputs]` — **con
 
 ### Por qué importa tanto
 
-Una CPU nunca carga un solo float. Carga una **línea de caché de 64 bytes** (16 floats) cada vez,
+Una CPU nunca carga un solo float. Carga una **línea de cache de 64 bytes** (16 floats) cada vez,
 porque la memoria es enormemente más lenta que la aritmética — una lectura de memoria principal
 cuesta cientos de ciclos mientras que una multiplicación cuesta uno.
 
 - **Acceso disperso (columna de NumPy):** cargas 16 floats, usas 1, descartas 15. Desperdicias
-  ~94 % del ancho de banda de memoria, y SIMD no puede usarse sin una costosa instrucción de
-  recolección.
+  ~94 % del ancho de banda de memoria, y SIMD no puede usarse sin una costosa instrucción
+  `gather`.
 - **Acceso contiguo:** cargas 16 floats, usas los 16, y una sola instrucción SIMD procesa entre 4 y
   16 de ellos a la vez (§15).
 
@@ -749,20 +750,20 @@ A tamaños realistas la afirmación se sostiene con holgura: 4,6–5,9×, el may
 código, y mayor que la ganancia de SIMD que en parte habilita.
 
 **Pero mira la primera fila.** En la capa XOR la disposición «mala» es *más rápida*. Ocho pesos son
-32 bytes — caben dentro de una sola línea de caché de 64 bytes, así que no hay ancho de banda
+32 bytes — caben dentro de una sola línea de cache de 64 bytes, así que no hay ancho de banda
 desperdiciado que ahorrar ni recolección que evitar. Lo único que queda es la preparación del bucle
 de la ruta SIMD, que el bucle disperso simple se salta.
 
 Vale la pena detenerse en esto, porque la demo XOR es lo primero que ejecutas:
 
 > **Todas las optimizaciones de esta guía no valen nada a la escala del ejemplo que las
-> introduce.** El comportamiento de la caché es una propiedad de los datos que no caben en caché.
+> introduce.** El comportamiento de la cache es una propiedad de los datos que no caben en cache.
 > La vectorización es una propiedad de los bucles lo bastante largos como para amortizar su
-> preparación. Por debajo de esos umbrales estás midiendo sobrecarga, y la implementación
+> preparación. Por debajo de esos umbrales estás midiendo `overhead`, y la implementación
 > «obviamente peor» gana con frecuencia.
 >
 > El corolario es el útil: **el tamaño al que mides determina la respuesta que obtienes.** Un
-> un benchmark de la capa XOR te habría dicho que borrases la disposición contigua.
+> benchmark de la capa XOR te habría dicho que borrases la disposición contigua.
 
 **Un único arreglo plano, no un arreglo de arreglos.** `float[]` gana a `float[][]` aquí: una
 asignación en lugar de `j`, una comprobación de límites en lugar de dos, sin perseguir punteros por
@@ -790,7 +791,7 @@ así que el backward pass lo reutiliza en vez de recalcular `exp()` o `tanh()`.
 
 Este es un ahorro real, no una microoptimización: las funciones trascendentes cuestan entre 20 y
 100 veces una multiplicación. Es también la razón por la que `Forward` guarda sus salidas en
-caché — véase §14.
+cache — véase §14.
 
 ### Por qué `Step` lanza una excepción en lugar de devolver 0
 
@@ -838,21 +839,20 @@ solo cambió la disposición.
 
 Backpropagation necesita tanto las entradas que produjeron estas activaciones (para
 `dL/dW = δ × entrada`) como las activaciones mismas (para `g'` a partir de `a`). Así que algo tiene
-que guardarlas en caché, y el lugar obvio es el final de `Forward`:
+que guardarlas en una cache, y el lugar obvio es el final de `Forward`:
 
 ```csharp
 aIn.CopyTo(_lastInput);      // lo que hacía antes el código
 aOut.CopyTo(_lastOutput);
 ```
 
-**Eso es una trampa, y merece la pena entenderla porque la misma forma aparece en todas partes.** La
-caché la escribe `Forward` pero la lee `Backward`, a una distancia arbitraria después. Cualquier
-cosa que ejecute un forward pass en medio la sobrescribe. Y hay muchas cosas razonables
-que lo hacen:
+**Eso es una trampa, y merece la pena entenderla porque la misma forma aparece en todas partes.**
+`Forward` escribe la cache, pero `Backward` la lee mucho después. Cualquier llamada intermedia que
+ejecute un `forward pass` la sobrescribe. Y hay muchas llamadas razonables que lo hacen:
 
 ```csharp
 net.AccumulateGradients(x, y);
-Console.WriteLine(net.Predict(somethingElse)[0]);   // ← destruye la caché en silencio
+Console.WriteLine(net.Predict(somethingElse)[0]);   // ← destruye la cache en silencio
 net.ApplyGradients(lr, 1);                          //   los gradientes ahora describen el ejemplo equivocado
 ```
 
@@ -863,12 +863,12 @@ otra vía.
 La solución es hacer que ese estado inválido no pueda expresarse, en lugar de documentarlo. Ahora
 hay dos métodos:
 
-| | ¿guarda en caché? | usado por |
+| | ¿guarda en cache? | usado por |
 |---|---|---|
 | `Forward` | no | `Predict`, `Loss`, `ForwardBatch`, `GradientCheck` — todo es inferencia |
 | `ForwardTrain` | sí | solo `AccumulateGradients` |
 
-`Backward` consume la caché y la limpia, de modo que un segundo `Backward`, o uno sin un
+`Backward` consume la cache y la limpia, de modo que un segundo `Backward`, o uno sin un
 `ForwardTrain` previo, lanza una excepción en lugar de derivar calladamente un ejemplo obsoleto.
 `GradientCheck` depende directamente de esto: evalúa la pérdida dos veces por parámetro mientras
 los gradientes analíticos están en los acumuladores, lo cual solo es seguro porque `Loss` no puede
@@ -879,7 +879,7 @@ tocar el estado de entrenamiento.
 > que documentar el orden. Un comentario que diga «no llames a `Predict` aquí» es un error
 > esperando a alguien que no lo leyó.
 
-**El coste en memoria.** La caché es también la razón por la que entrenar necesita mucha más
+**El coste en memoria.** La cache es también la razón por la que entrenar necesita mucha más
 memoria que inferir: **no puedes liberar las activaciones del forward pass hasta que el backward
 pass las haya consumido.** Eso es lo que significa en la práctica «batch size demasiado
 grande» — sin memoria, sosteniendo a la vez las activaciones de todos los ejemplos.
@@ -915,7 +915,7 @@ mismo código fuente se ejecuta a ancho completo tanto en ARM como en x86.
 
 > **Malentendido común, y el que inició la reescritura de este proyecto:** `Vector<float>` **no** es
 > un vector matemático de longitud variable. Es un registro de hardware de ancho fijo. No puede
-> almacenar los pesos de una capa — es una tubería por la que haces fluir datos, `Count` floats
+> almacenar los pesos de una capa — es un pipeline por el que haces fluir datos, `Count` floats
 > cada vez.
 
 ### El producto escalar ([`SimdOps.Dot`](src/NN/SimdOps.cs))
@@ -968,7 +968,7 @@ extra.
 
 **Y con longitud 8 cuesta activamente un 17 %.** Ocho floats son exactamente dos vectores de ancho
 4: el bucle de dos acumuladores ejecuta su cuerpo una vez y cae directamente en la cola, pagando
-toda la preparación y sin recuperar nada del encauzamiento. La misma historia de umbral de tamaño
+toda la preparación y sin recuperar nada del pipeline. La misma historia de umbral de tamaño
 del §12, pero más aguda — aquí la «optimización» no solo deja de ayudar, empieza a perjudicar.
 
 > **Una nota al pie que vale más que la tabla.** Bajo .NET 9 esa primera fila era un empate técnico;
@@ -976,12 +976,12 @@ del §12, pero más aguda — aquí la «optimización» no solo deja de ayudar,
 > JIT. **Las microoptimizaciones se miden contra un tiempo de ejecución, no contra la física**, y
 > una actualización del runtime puede invertir el signo de un efecto mientras tu código fuente
 > permanece quieto. Este es el argumento para mantener los benchmarks *dentro del
-> repositorio* y volver a ejecutarlas, en lugar de medir una vez y escribir el número en un comentario donde
+> repositorio* y volver a ejecutarlos, en lugar de medir una vez y escribir el número en un comentario donde
 > queda obsoleto en silencio.
 
 ### `AddScaled` — `dest += src × scale`
 
-[`SimdOps.AddScaled`](src/NN/SimdOps.cs) es el caballo de batalla de la pasada *hacia atrás*. Fíjate
+[`SimdOps.AddScaled`](src/NN/SimdOps.cs) es el caballo de batalla del `backward pass`. Fíjate
 en que, según el §8, los pasos 3 y 4 son ambos «suma un vector escalado en un acumulador» — la
 misma primitiva sirve para acumular el gradiente de los pesos, propagar el gradiente de entrada y
 para el propio paso de descenso.
@@ -990,7 +990,7 @@ para el propio paso de descenso.
 
 El JIT emite una copia de código distinta por cada instanciación genérica con tipo por valor (§11).
 Si se dejara dentro de `Dense<TActivation>`, `Dot` se duplicaría para `Dense<Tanh>`, `Dense<ReLU>`,
-`Dense<Sigmoid>`… inflando la caché de instrucciones sin ningún beneficio. Una clase auxiliar no
+`Dense<Sigmoid>`… inflando la cache de instrucciones sin ningún beneficio. Una clase auxiliar no
 genérica obtiene exactamente una copia.
 
 ---
@@ -1039,8 +1039,8 @@ nada. Lo cual también señala un modo de fallo real — véase §23.
 $$W \mathrel{-}= \eta \cdot \frac{1}{\text{batchSize}}\frac{\partial L}{\partial W}$$
 
 ¿Por qué separarlos? Porque permite sumar gradientes de varios ejemplos antes de actualizar — los
-mini-batches, §20. Dividir por el batch size promedia en lugar de sumar, de modo que tu tasa de
-aprendizaje sigue funcionando cuando cambias el batch size.
+mini-batches, §20. Dividir por el batch size promedia en lugar de sumar, de modo que tu
+`learning rate` sigue funcionando cuando cambias el batch size.
 
 Esta separación no es una peculiaridad de este código. PyTorch divide exactamente por la misma
 costura: `loss.backward()` acumula, `optimizer.step()` aplica. Si pasas a un framework real, esto
@@ -1262,13 +1262,13 @@ para el que se puso ahí el campo de versión. Los pesos de un clasificador soft
 sentido sin saber que hay que aplicarles softmax: cárgalo como una red normal y devuelve logits sin
 cotas donde quien llama espera probabilidades. No se lanza nada, `Predict` sigue devolviendo diez
 números, y solo sus *valores* están mal (§27). Los archivos de versión 1 son anteriores a que
-hubiera elección de pérdida y siguen cargándose — como error cuadrático medio, que es lo que eran.
+hubiera elección de pérdida y siguen cargándose — como MSE, que es lo que eran.
 **Una versión de formato se gana su sitio la primera vez que necesitas añadir un campo**, y «los
 archivos antiguos siguen funcionando» es todo el rendimiento de haberla escrito.
 
-> **Lo que *no* se guarda:** los acumuladores de gradiente y la caché de activaciones de la pasada
-> hacia adelante. Eso es espacio de trabajo del entrenamiento, reconstruido vacío al cargar. Si más
-> adelante añades momento o Adam, su estado también habría que guardarlo para reanudar el
+> **Lo que *no* se guarda:** los acumuladores de gradiente y la cache de activaciones del
+> `forward pass`. Eso es espacio de trabajo del entrenamiento, reconstruido vacío al cargar. Si más
+> adelante añades momentum o Adam, su estado también habría que guardarlo para reanudar el
 > entrenamiento a mitad — véase §25 punto 7.
 
 ### Dónde deja de bastar lo secuencial
@@ -1286,9 +1286,9 @@ son *tipos sin relación entre sí* — no puedes ponerlos en el mismo arreglo. 
 velocidad; la interfaz [`ILayer`](src/NN/ILayer.cs) da heterogeneidad. Necesitas ambas, así que el
 código tiene ambas.
 
-**Hacia adelante:** `x → layer0 → layer1 → … → output`
+**Forward pass:** `x → layer0 → layer1 → … → output`
 
-**Hacia atrás:** recorre el arreglo en sentido inverso, y el `gradIn` de cada capa se convierte en
+**Backward pass:** recorre el arreglo en sentido inverso, y el `gradIn` de cada capa se convierte en
 el `gradOut` de la siguiente:
 
 ```csharp
@@ -1296,7 +1296,7 @@ for (int i = last; i >= 0; i--)
     _layers[i].Backward(_grads[i], i > 0 ? _grads[i - 1] : Span<float>.Empty);
 ```
 
-Esa única línea es el paso «entrega el gradiente hacia atrás» del §8, generalizado a cualquier
+Esa única línea es el paso «entrega el gradiente a la capa anterior» del §8, generalizado a cualquier
 profundidad.
 
 El constructor valida que las formas de capas adyacentes coincidan — el `Inputs` de la capa `i`
@@ -1310,7 +1310,7 @@ Esos buffers preasignados son lo que hace que el entrenamiento no asigne memoria
 razón de dos reglas que la API no puede imponerte.
 
 **Una red por hilo.** `Network` y `Dense` mantienen buffers de activación mutables, acumuladores de
-gradiente, la caché del forward pass y el orden del barajado. Nada de eso está
+gradiente, la cache del forward pass y el orden del barajado. Nada de eso está
 sincronizado, y nada es seguro de compartir. Dos hilos llamando a `Predict` sobre una red
 entrelazarán escrituras en el mismo arreglo de activaciones y ambos obtendrán basura — sin ninguna
 excepción, porque técnicamente nada está mal a nivel de tipos.
@@ -1343,7 +1343,7 @@ arranque mantiene el comportamiento de carga independiente del momento en que oc
 
 ## 20. El bucle de entrenamiento
 
-Por **época** (una pasada completa sobre los datos):
+Por **época** (`epoch`, una pasada completa sobre los datos):
 
 1. **Baraja** el orden de los ejemplos.
 2. Para cada **mini-batch**: acumula gradientes sobre sus ejemplos, y luego aplícalos una vez.
@@ -1352,20 +1352,20 @@ Por **época** (una pasada completa sobre los datos):
 
 Con un orden fijo la red puede aprender el *orden* en lugar de los datos, y muestras consecutivas
 correlacionadas (todas de la clase A, luego todas de la clase B) producen estimaciones sesgadas del
-gradiente que hacen que el entrenamiento dé bandazos. Barajar hace que cada lote sea una muestra
-más justa del conjunto completo.
+gradiente que hacen que el entrenamiento dé bandazos. Barajar hace que cada `batch` sea una muestra
+más justa del dataset completo.
 
 ### Batch size — los tres regímenes
 
 | Batch size | Nombre | Comportamiento |
 |---|---|---|
 | 1 | Estocástico (SGD) | Actualizaciones rápidas y ruidosas. El ruido puede ayudar a escapar de mínimos locales poco profundos. |
-| 8–256 | Mini-lote | El compromiso estándar, y mucho más eficiente para el hardware. |
-| Todos | Lote completo | El gradiente más suave, el avance más lento, más memoria. |
+| 8–256 | Mini-batch | El compromiso estándar, y mucho más eficiente para el hardware. |
+| Todos | Full batch | El gradiente más suave, el avance más lento, más memoria. |
 
-Aquí el valor predeterminado es lote completo, ya que XOR tiene cuatro ejemplos.
+Aquí el valor predeterminado es `full batch`, ya que XOR tiene cuatro ejemplos.
 
-Promediar sobre un lote reduce el ruido del gradiente — los ejemplos individuales discrepan sobre
+Promediar sobre un `batch` reduce el ruido del gradiente — los ejemplos individuales discrepan sobre
 cuál es la mejor dirección, y promediar encuentra su consenso.
 
 La sección de las dos lunas de la demo es donde esto se hace visible (§22): 1000 ejemplos con
@@ -1374,7 +1374,7 @@ Las 4000 épocas de XOR son 4000 actualizaciones. **Las épocas no son la unidad
 son las actualizaciones, y la proporción entre ambas es el batch size.
 
 Ten en cuenta que aquí los mini-batches son actualmente un recurso *estadístico*, no de rendimiento.
-Los frameworks reales agrupan en lotes porque eso permite que un bloque de pesos cargado sirva a
+Los frameworks reales agrupan en batches porque eso permite que un bloque de pesos cargado sirva a
 muchos ejemplos a la vez; esta biblioteca sigue recorriendo los pesos una vez por ejemplo en
 cualquier caso, razón por la cual
 [`ForwardBatch` no mide más rápido que un bucle](bench/README.md#4-forwardbatch--a-deliberate-null-result)
@@ -1385,7 +1385,7 @@ cualquier caso, razón por la cual
 Una época = una pasada sobre todos los ejemplos. Las redes necesitan muchas porque cada
 actualización es un paso pequeño (§4).
 
-XOR requiere aquí ~4000 épocas, lo cual suena enorme. Pero la demo se ejecuta a **lote completo**,
+XOR requiere aquí ~4000 épocas, lo cual suena enorme. Pero la demo se ejecuta a **full batch**,
 así que una época = una actualización de parámetros: 4000 pasos reales de descenso de gradiente,
 cada uno informado por los cuatro ejemplos (16 000 evaluaciones de ejemplo). Cuatro mil pasos
 pequeños para ajustar 17 parámetros no es nada notable — y es por lo que importa la distinción
@@ -1409,7 +1409,7 @@ realmente la pérdida, y compara:
 $$\frac{\partial L}{\partial w} \approx \frac{L(w + \epsilon) - L(w - \epsilon)}{2\epsilon}$$
 
 Esta es la definición de derivada con un ε finito en lugar de un límite. Es demasiado lenta para
-entrenar — dos pasadas completas hacia adelante *por parámetro* — pero perfecta para verificar. La
+entrenar — dos forward passes completos *por parámetro* — pero perfecta para verificar. La
 diferencia **central** (en ambas direcciones) tiene error O(ε²) frente a O(ε) de la versión de un
 solo lado, lo que compensa de sobra la segunda evaluación.
 
@@ -1449,13 +1449,13 @@ agnóstico al tipo (`GetParameter` / `SetParameter` / `GetParameterGradient` en
 Las comprobaciones se ejecutan como pruebas reales (`dotnet test`), incluidas dos que es fácil
 pasar por alto:
 
-- **Una derivada rota a propósito** — una variante de `Tanh` que usa `1 + a²` en lugar de `1 - a²`
+- **Una derivada incorrecta a propósito** — una variante de `Tanh` que usa `1 + a²` en lugar de `1 - a²`
   — debe producir error O(1). Sin esto, las pruebas que pasan podrían estar pasando *vacuamente*:
   una comprobación que no puede fallar no demuestra nada.
 - **La profundidad eleva el suelo del error.** Tres capas miden ~4,6e-3 frente a ~2,4e-4 de dos,
   porque cada capa extra acumula redondeo de float32 en las evaluaciones de pérdida de las que
   depende la diferencia finita. El umbral se relaja para la prueba más profunda — pero sigue
-  separando un gradiente correcto de uno roto por más de un orden de magnitud.
+  separando un gradiente correcto de uno incorrecto por más de un orden de magnitud.
 
 ### La excepción de ReLU — cuando una comprobación que falla *no* es un error
 
@@ -1546,7 +1546,7 @@ dominan el entrenamiento en la práctica:
 
 | | por qué XOR no puede mostrarlo |
 |---|---|
-| **Mini-batches** | Cuatro ejemplos son un lote completo. Cada «época» es una sola actualización. |
+| **Mini-batches** | Cuatro ejemplos son un `full batch`. Cada «época» es una sola actualización. |
 | **Generalización** | Los cuatro puntos *son* el problema. No hay nada reservado a lo que generalizar. |
 | **Sobreajuste** | Nada que memorizar. |
 
@@ -1565,7 +1565,7 @@ Una red 2 → 16 → 16 → 1, batch size 32, learning rate 0,3:
     150       0.0177      98.1%     96.4%
 ```
 
-**Que la precisión en prueba siga a la de entrenamiento es el aspecto que tiene la
+**Que el `test accuracy` siga al `train accuracy` es el aspecto que tiene la
 generalización.** Fíjate también en que ninguna llega al 100 % y en que eso es correcto: con este
 nivel de ruido las medias lunas se solapan de verdad, así que algunos puntos son inclasificables y
 un modelo que puntuara 100 % sería un modelo que los memorizó.
@@ -1621,7 +1621,7 @@ respecto a las dos lunas es lo importante — 784 entradas en lugar de 2, y 101 
 lugar de 337.
 
 Arquitectura: **784 → 128 tanh → 10 logits → softmax**, una salida por dígito, entrenada con
-objetivos one-hot (un vector con un único 1 en la clase correcta) y entropía cruzada. La
+objetivos one-hot (un vector con un único 1 en la clase correcta) y cross-entropy. La
 predicción es la probabilidad más alta.
 
 ```
@@ -1639,7 +1639,7 @@ por fin a un tamaño en el que importa. Por eso los benchmarks también miden un
 
 Tres cosas que enseña esta demo y que nada más pequeño puede:
 
-**La precisión oculta la estructura; una matriz de confusión la muestra.** Los errores no están
+**El `accuracy` oculta la estructura; una matriz de confusión la muestra.** Los errores no están
 repartidos de manera uniforme:
 
 ```
@@ -1655,8 +1655,8 @@ están *estructurados*, y la demo imprime los dígitos mal clasificados en ASCII
 mayoría son de los que una persona también dudaría.
 
 **La elección de la pérdida vale más que cualquier cantidad de entrenamiento adicional.** La misma
-red puntuada con MSE sobre diez sigmoides solo alcanza el 97,41 %, y necesita una tasa de
-aprendizaje de **1,0** para lograrlo — muy fuera del 0,1–0,5 que recomienda el §4. Ejecuta
+red con MSE sobre diez sigmoides solo alcanza el 97,41 %, y necesita un `learning rate` de **1,0**
+para lograrlo — muy fuera del 0,1–0,5 que recomienda el §4. Ejecuta
 `--loss mse` y obsérvalo. La causa es un gradiente que llega demasiado reducido por dos factores:
 
 $$\frac{\partial L}{\partial a} = \frac{2(a-y)}{10} \quad\text{luego}\quad \times\, \sigma'(z) = a(1-a) \le 0.25$$
@@ -1666,19 +1666,19 @@ desploma hacia cero conforme las salidas se saturan — es decir, exactamente cu
 equivocada con confianza y más necesita aprender. El enorme tamaño de paso es la compensación por
 una desventaja que impuso la función de pérdida.
 
-Softmax con entropía cruzada la elimina. Medido sobre arquitectura, semilla y épocas idénticas:
+Softmax con cross-entropy la elimina. Medido sobre arquitectura, semilla y épocas idénticas:
 
-| Pérdida | Precisión en prueba | Learning rate |
+| Pérdida | Test accuracy | Learning rate |
 |---|---|---|
 | MSE sobre diez sigmoides | 97,41 % | 1,0 |
-| MSE, con el learning rate de la entropía cruzada | 92,93 % | 0,1 |
-| **Softmax + entropía cruzada** | **98,02 %** | **0,1** |
+| MSE, con el learning rate de la cross-entropy | 92,93 % | 0,1 |
+| **Softmax + cross-entropy** | **98,02 %** | **0,1** |
 
 La fila del medio es la honesta: con el mismo learning rate la diferencia es de cinco puntos, y
 MSE solo cierra la brecha dando pasos diez veces mayores. El §27 explica el mecanismo.
 
 **Los límites documentados de la biblioteca se vuelven medibles en lugar de teóricos.** El 98,0 %
-es lo normal para esta arquitectura. Lo que queda es el §25 punto 2 — SGD simple, sin momento ni
+es lo normal para esta arquitectura. Lo que queda es el §25 punto 2 — SGD simple, sin momentum ni
 Adam — que es el ejercicio 10, con un número concreto que batir.
 
 ### Y aquí es donde guardar un modelo por fin significa algo
@@ -1696,10 +1696,10 @@ salida real del programa:
     397 KB, 101,770 parameters, loaded in 4 ms
 ```
 
-**37 segundos se convierten en 4 milisegundos, con precisión idéntica.** El §19 explicó el formato
+**37 segundos se convierten en 4 milisegundos, con `accuracy` idéntico.** El §19 explicó el formato
 de archivo con un modelo de 17 parámetros, donde la persistencia es una curiosidad. Aquí es la
 diferencia entre una demo que ejecutas una vez y una demo que puedes usar de verdad — y es la forma
-normal del aprendizaje automático desplegado, donde el entrenamiento ocurre rara vez en hardware
+normal del machine learning desplegado, donde el entrenamiento ocurre rara vez en hardware
 caro y la inferencia ocurre constantemente en otro sitio. Los 397 KB son todo el entregable; las
 60 000 imágenes de entrenamiento no hacen falta para clasificar nada.
 
@@ -1713,14 +1713,14 @@ de un volcado pelado de pesos.
 **La recarga se verifica, no se supone.** Tras guardar, la demo recarga y compara 1000 predicciones
 bit a bit. Esto importa más con 101 770 parámetros que con 17: con diecisiete, un peso mal
 serializado casi con seguridad rompe una predicción de forma visible, mientras que con cien mil un
-único valor fuera de sitio desplaza la precisión una fracción de punto porcentual y se lee como
+único valor fuera de sitio desplaza el `accuracy` una fracción de punto porcentual y se lee como
 ruido. La igualdad exacta es la única comparación que lo detecta, y `ModelScaleTests` fija esa
 misma propiedad.
 
 **El nombre del archivo lleva lo que el formato no.** El archivo del modelo registra la
 arquitectura pero no tiene ni idea de *cuántos datos vio*. Un modelo entrenado con 5000 imágenes se
 recarga tan tranquilamente junto a uno entrenado con 60 000, así que la demo pone tanto el ancho de
-la capa oculta como cualquier límite del conjunto de entrenamiento en el nombre del archivo.
+la capa oculta como cualquier límite del training set en el nombre del archivo.
 Ninguna de las dos discrepancias sería un error — ambas serían resultados silenciosamente
 incorrectos, que es la clase más difícil de notar.
 
@@ -1770,7 +1770,7 @@ estrictamente secuencial: el filtro «Up» se refiere a la fila de arriba ya rec
 #### La red no aprendió «dígitos» — aprendió las convenciones de MNIST
 
 Esta es la razón más común, con diferencia, por la que un reconocedor hecho desde cero puntúa 97 %
-en el conjunto de prueba y luego falla con la primera foto que le das, y merece la pena
+en el test set y luego falla con la primera foto que le das, y merece la pena
 interiorizarla mucho más allá de este proyecto.
 
 Las imágenes de MNIST no son meramente «fotos de dígitos». Son imágenes bajo tres reglas concretas:
@@ -1781,7 +1781,7 @@ Las imágenes de MNIST no son meramente «fotos de dígitos». Son imágenes baj
 | **El dígito llena un recuadro de 20×20** | Pequeño, con margen alrededor | Reducir todo el marco deja un borrón de unos pocos píxeles |
 | **Centrado por centro de masa en 28×28** | Donde quiera que estuviese | Cada trazo cae donde la red aprendió a ver fondo |
 
-Viola cualquiera de ellas y la precisión se desploma de una forma que parece exactamente un modelo
+Viola cualquiera de ellas y el `accuracy` se desploma de una forma que parece exactamente un modelo
 roto. Así que el preprocesador:
 
 1. **Detecta la polaridad desde el borde**, no desde toda la imagen — el borde del marco es fondo
@@ -1800,21 +1800,21 @@ roto. Así que el preprocesador:
 
 > **La lección se generaliza.** Esas cien líneas valen tanto como los 101 770 parámetros
 > entrenados, porque los parámetros carecen de sentido aplicados a una entrada con la forma
-> equivocada. «La mayor parte del aprendizaje automático es preparación de datos» suele decirse de
+> equivocada. «La mayor parte del machine learning es preparación de datos» suele decirse de
 > los datos de *entrenamiento*; es igual de cierto para los datos que le entregas a un modelo
 > terminado. El modelo es una función, y una función aplicada fuera de su dominio devuelve
 > disparates con confianza en lugar de un error.
 
 #### Verificándolo de extremo a extremo
 
-La tubería se comprobó exportando dígitos de prueba de MNIST como **PNG de 248×248, oscuro sobre
+El pipeline se comprobó exportando dígitos de prueba de MNIST como **PNG de 248×248, oscuro sobre
 claro y con márgenes amplios** — violando deliberadamente las tres convenciones — y leyéndolos de
 vuelta:
 
 **Diez de diez coincidieron con lo que el modelo predice sobre los datos crudos de MNIST**,
 incluido uno en el que se *equivoca*: un 5 que llama 6 — con 0,898 de confianza a través de la
-tubería de imagen, y 0,898 sobre el mismo dígito leído directamente del dataset. Ese
-último es el resultado útil. La tubería reproduce los errores del modelo con la misma fidelidad que
+pipeline de imagen, y 0,898 sobre el mismo dígito leído directamente del dataset. Ese
+último es el resultado útil. El pipeline reproduce los errores del modelo con la misma fidelidad que
 sus aciertos, y hasta tres decimales, que es como sabes que el preprocesado es transparente y no
 está ayudando por accidente. Un paso de preprocesado que «arreglara» ese 5 sería prueba de un
 error, no de calidad.
@@ -1825,8 +1825,8 @@ invertido, diminuto o descentrado es un problema de preprocesado, y ninguna cant
 entrenamiento adicional lo arreglará.
 
 > El dataset no está en el repositorio. La demo lo descarga una vez (~11 MB) y lo guarda
-> en caché fuera del árbol de trabajo; las ejecuciones posteriores, incluidas las que no tienen
-> conexión, leen esa caché. Sin red ni caché lo dice y termina limpiamente — un repositorio
+> en cache fuera del árbol de trabajo; las ejecuciones posteriores, incluidas las que no tienen
+> conexión, leen esa cache. Sin red ni cache, la demo lo dice y termina limpiamente — un repositorio
 > didáctico no debería fallar porque un servidor espejo esté caído. El formato IDX que analiza
 > merece un vistazo ([`Idx.cs`](src/NN.Mnist/Idx.cs)): un número mágico, unas dimensiones y bytes
 > crudos. El detalle peligroso es el orden de bytes **big-endian**; si lo lees como little-endian,
@@ -1840,10 +1840,10 @@ Los modos de fallo con los que realmente te toparás, y qué significan:
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| La pérdida → `NaN` o ∞ | Learning rate demasiado alto; los pesos explotan | Dividel learning rate entre 10 |
+| La pérdida → `NaN` o ∞ | Learning rate demasiado alto; los pesos explotan | Divide el learning rate entre 10 |
 | La pérdida se estanca en un valor intermedio | Inicialización a cero o constante — simetría sin romper (§17) | Inicialización aleatoria |
 | La pérdida baja y se estanca alta | Capacidad insuficiente, o unidades saturadas | Más unidades ocultas; prueba tanh en vez de sigmoide |
-| La pérdida apenas se mueve | Learning rate demasiado baja, o gradientes que se desvanecen | Sube la tasa; usa ReLU/tanh |
+| La pérdida apenas se mueve | Learning rate demasiado bajo, o gradientes que se desvanecen | Sube el learning rate; usa ReLU/tanh |
 | Entrena pero predice mal | Error en el gradiente, o muy pocas épocas | **Verifica el gradiente primero** (§21) |
 | Una red ReLU deja de mejorar | Unidades muertas — salida 0 para toda entrada, gradiente permanentemente 0 | Baja el learning rate; prueba leaky ReLU |
 | Perfecto en entrenamiento, malo en datos nuevos | Sobreajuste — memorización, no aprendizaje | Más datos, menos parámetros, regularización |
@@ -1882,25 +1882,25 @@ Ordenados aproximadamente por valor. Los de «rómpelo» son los que más enseñ
    imprime otra vez. Obtendrás una descomposición completamente distinta e igual de válida. Este es
    el ejercicio más esclarecedor de todos: muestra que no hay un único conjunto «correcto» de
    características aprendidas.
-8. **Barre el batch size en las dos lunas.** Prueba 1, 8, 32, 256 y lote completo con un número
-   fijo de épocas, y representa la precisión de prueba frente a *actualizaciones* en lugar de
+8. **Barre el batch size en las dos lunas.** Prueba 1, 8, 32, 256 y `full batch` con un número
+   fijo de épocas, y representa el `test accuracy` frente a *actualizaciones* en lugar de
    épocas. Los tres regímenes del §20, sobre un dataset lo bastante grande como para
    distinguirlos.
 9. **Averigua dónde empieza el sobreajuste.** La demo usa 20 puntos de entrenamiento. Barre 20, 50,
    200 y 1000 con capacidad fija y observa cómo se cierra la brecha entre entrenamiento y prueba.
    Después mantén los datos en 20 y encoge la red en su lugar. Dos curas distintas para la misma
    enfermedad.
-10. **Añade momento:** mantén un buffer de velocidad por capa, `v = βv + grad` (β ≈ 0,9), y avanza a
+10. **Añade momentum:** mantén un buffer de velocidad por capa, `v = βv + grad` (β ≈ 0,9), y avanza a
     lo largo de `v`. Mídelo en MNIST, donde la referencia es **98,02 % en 37 s** (§22) — un número
     lo bastante concreto como para batirlo o no. Esta es la mayor mejora aún sin implementar.
 11. **Demuestra que la pérdida importa, y luego explícalo.** Ejecuta MNIST de ambas formas —
     `--loss mse --retrain` frente al valor predeterminado — y confirma la tabla del §22 en tu propia
-    máquina. Después responde a la pregunta que plantea: MSE alcanza el 97,41 % *solo* con una tasa
-    de aprendizaje de 1,0, y se queda en 92,93 % con el 0,1 de la entropía cruzada. ¿Cuál de los dos
+    máquina. Después responde a la pregunta que plantea: MSE alcanza el 97,41 % *solo* con un
+    `learning rate` de 1,0, y se queda en 92,93 % con el 0,1 de la cross-entropy. ¿Cuál de los dos
     factores reductores del §27 explica más parte de esa brecha? (Prueba MSE sobre una salida
     `Dense<Identity>` para eliminar `σ'(z)` manteniendo MSE, y mira dónde queda.)
 12. **Deriva tú mismo el gradiente fusionado.** El §27 afirma que el jacobiano de softmax y el
-    `1/p` de la entropía cruzada se cancelan y dejan `p - y`. Haz el álgebra para el caso de dos
+    `1/p` de la cross-entropy se cancelan y dejan `p - y`. Haz el álgebra para el caso de dos
     clases y míralo ocurrir; después rompe a propósito `SoftmaxCrossEntropy.Gradient` — usa `p - y`
     multiplicado por 2, por ejemplo — y ejecuta `SoftmaxGradientTests`. Un gradiente incorrecto pero
     plausible sigue entrenando; la comprobación sigue detectándolo. Este es el argumento del §21
@@ -1909,8 +1909,8 @@ Ordenados aproximadamente por valor. Los de «rómpelo» son los que más enseñ
     genuinamente ambiguos, o la red falla en algo que a una persona le resultaría fácil? Después lee
     la matriz de confusión: ¿qué pares confunde, y comparten trazos esos dígitos? Este es el hábito
     que separa el «98 %» de saber qué hace realmente un modelo.
-14. **Rompe la caché del forward pass a propósito.** Haz que `Forward` vuelva a guardar
-    en caché (§14) y llama a `net.Predict(...)` entre `AccumulateGradients` y `ApplyGradients`. No
+14. **Rompe la cache del forward pass a propósito.** Haz que `Forward` vuelva a guardar
+    en cache (§14) y llama a `net.Predict(...)` entre `AccumulateGradients` y `ApplyGradients`. No
     se lanza nada, la pérdida sigue bajando, y la red entrena con el ejemplo equivocado. Después
     ejecuta `CacheLifetimeTests` y míralas detectarlo. La mejor demostración disponible de por qué
     «sigue entrenando» no demuestra nada.
@@ -1937,29 +1937,29 @@ Límites honestos, ordenados por cuánto cuestan:
 
    *La mitad de esto ya está medida.* `ForwardBatch` mide **0,98× frente a un bucle manual** con
    batch sizes de 1, 32 y 256 — un resultado nulo, que confirma que hoy no aporta nada
-   ([tabla](bench/README.md#4-forwardbatch--a-deliberate-null-result)). Ese 2 % es sobrecarga de
+   ([tabla](bench/README.md#4-forwardbatch--a-deliberate-null-result)). Ese 2 % es overhead de
    bucle que quien llama ya no paga, no aritmética. La *otra* mitad — que un GEMM real por bloques
    dominaría cualquier otra optimización de aquí — sigue sin medir, porque sigue sin escribirse. Ese
    es el ejercicio 15, y sigue siendo la mayor ganancia individual disponible.
-2. **SGD simple.** Sin momento, Adam, planificación del learning rate ni decaimiento de
-   pesos. Adam suele converger varias veces más rápido — ahora medible frente al 98,02 % en 37 s de
-   MNIST (§22). Con la entropía cruzada implementada, esta es la mayor brecha que queda.
-3. **Solo dos pérdidas** — error cuadrático medio y softmax con entropía cruzada (§27). Suficiente
-   para regresión y clasificación de etiqueta única; la clasificación multietiqueta quiere entropía
-   cruzada binaria por salida, que aquí no existe.
-4. **De un solo hilo.** Ningún `Parallel.For` sobre unidades ni sobre filas del lote.
+2. **SGD simple.** Sin momentum, Adam, planificación del learning rate ni `weight decay`.
+   Adam suele converger varias veces más rápido — ahora medible frente al 98,02 % en 37 s de
+   MNIST (§22). Con la cross-entropy implementada, esta es la mayor brecha que queda.
+3. **Solo dos pérdidas** — MSE y softmax con cross-entropy (§27). Suficiente
+   para regresión y clasificación de etiqueta única; la clasificación multietiqueta quiere
+   binary cross-entropy por salida, que aquí no existe.
+4. **Single-threaded.** Ningún `Parallel.For` sobre unidades ni sobre filas del batch.
 5. **Sin FMA explícito.** `acc += a * b` puede fusionarse o no en una sola instrucción;
    `Vector256.FusedMultiplyAdd` lo garantiza, al coste de escribir una ruta ARM aparte.
 6. **Sin regularización ni parada temprana, y sin partición de validación automática.** `Train`
    sobreajustará tan contento e informará de una pérdida decreciente todo el camino — el §22 lo
    muestra haciendo exactamente eso. La demo separa entrenamiento y prueba *a mano*, que es la
-   versión mínima viable; nada en la biblioteca calcula una puntuación de validación, la vigila, ni
+   versión mínima viable; nada en la biblioteca calcula un `validation score`, lo vigila, ni
    se detiene cuando se da la vuelta.
 7. **La serialización guarda solo parámetros** — no el estado del optimizador (todavía no hay
    ninguno) ni el historial de entrenamiento. Bien para inferencia; no puedes reanudar un
    entrenamiento a medias desde un archivo.
-8. **Pasadas hacia adelante y hacia atrás de un solo ejemplo.** Ambas recorren un ejemplo cada vez,
-   así que la API no puede expresar un backward pass por lotes aunque el punto 1 estuviera
+8. **Forward y backward passes de un solo ejemplo.** Ambos recorren un ejemplo cada vez,
+   así que la API no puede expresar un backward pass por batches aunque el punto 1 estuviera
    implementado. `ForwardBatch` solo sirve para inferencia por esta razón.
 
 Para producción, el C# más rápido es el C# que llama a otra cosa: `TensorPrimitives`, ONNX Runtime
@@ -1972,13 +1972,13 @@ entender, y a esta escala nunca será tu cuello de botella.
 
 Aproximadamente en orden:
 
-1. **Momento, y luego Adam** — ahora la mayor mejora individual todavía disponible, dado que la
-   entropía cruzada ya está implementada (§27). Referencia a batir: 98,02 % en 37 s.
+1. **Momentum, y luego Adam** — ahora la mayor mejora individual todavía disponible, dado que la
+   cross-entropy ya está implementada (§27). Referencia a batir: 98,02 % en 37 s.
 2. **Un dataset real — ya está aquí.** MNIST es el primero clásico, y
    [`src/NN.Mnist`](src/NN.Mnist/) entrena con él una red 784 → 128 → 10 hasta el 98,0 % en 37
    segundos. El siguiente escalón es Fashion-MNIST (misma forma y mismo cargador, problema más
    difícil) o CIFAR-10 (en color, y que pide convolución de verdad).
-3. **Regularización** — dropout, decaimiento de pesos — una vez que puedas sobreajustar algo.
+3. **Regularización** — dropout, weight decay — una vez que puedas sobreajustar algo.
 4. **Capas convolucionales**, si te interesan las imágenes.
 5. **Un framework real.** Habiendo construido esto, el `loss.backward()` / `optimizer.step()` de
    PyTorch se leerá como maquinaria familiar en lugar de como magia — que es exactamente la
@@ -1986,15 +1986,15 @@ Aproximadamente en orden:
 
 ---
 
-## 27. Softmax y entropía cruzada
+## 27. Softmax y cross-entropy
 
 MSE es la pérdida adecuada para la *regresión* — predecir números. Para la *clasificación* —
 elegir una entre varias categorías mutuamente excluyentes — es la herramienta equivocada, y la
 ejecución de MNIST del §22 mide el coste: 97,41 % con un learning rate de 1,0, frente a
 98,02 % con 0,1.
 
-Esta sección explica por qué, porque el mecanismo es una de las piezas de cálculo más útiles del
-aprendizaje automático práctico, y es corta.
+Esta sección explica por qué. El mecanismo es una de las piezas de cálculo más útiles del
+machine learning práctico, y además es corto.
 
 ### Qué falla con diez sigmoides
 
@@ -2005,7 +2005,7 @@ restricción que la arquitectura debería haber impuesto gratis.
 
 ### Softmax: hacer que las salidas compitan
 
-Softmax toma las puntuaciones crudas de la última capa — los **logits**, sin cotas e ininteligibles
+Softmax toma los scores crudos de la última capa — los **logits**, sin cotas e ininteligibles
 por sí solos — y las convierte en una distribución de probabilidad:
 
 $$p_j = \frac{e^{z_j}}{\sum_k e^{z_k}}$$
@@ -2030,9 +2030,9 @@ con logits de 1000.
 número. Softmax necesita las salidas de toda la capa a la vez, por el denominador. Por eso vive en
 la pérdida y no en la capa — véase la nota sobre `ILoss.Transform`.
 
-### Entropía cruzada: puntuar la distribución
+### Cross-entropy: evaluar la distribución
 
-Dada una distribución de probabilidad, la entropía cruzada hace una sola pregunta: *¿qué
+Dada una distribución de probabilidad, la cross-entropy hace una sola pregunta: *¿qué
 probabilidad asignaste a la respuesta correcta?*
 
 $$L = -\sum_j y_j \log(p_j) \quad\overset{\text{one-hot}}{=}\quad -\log(p_{\text{correcta}})$$
@@ -2047,7 +2047,7 @@ Deriva las dos por separado y ambas son desagradables:
 
 - **Softmax sola** da un jacobiano completo — cada salida depende de cada logit, así que obtienes
   una matriz n×n por ejemplo en lugar de un vector.
-- **La entropía cruzada sola** da un término `1/p` que explota cuando p se acerca a 0 —
+- **La cross-entropy sola** da un término `1/p` que explota cuando p se acerca a 0 —
   exactamente donde vive una red rematadamente equivocada.
 
 Compónlas y casi todo se cancela. Lo que sobrevive es:
@@ -2057,7 +2057,7 @@ $$\frac{\partial L}{\partial z_j} = p_j - y_j$$
 **Predicción menos objetivo.** Sin jacobiano, sin división, nada que pueda desbordarse y — algo
 crítico — sin ningún factor `σ'(z)` que se desvanezca. Compáralo con la cadena de MSE sobre
 sigmoide del §22, cuyo gradiente está escalado por `a(1-a) ≤ 0,25`, que se desploma hacia cero
-precisamente cuando la red está más equivocada. El `1/p` de la entropía cruzada disparándose y el
+precisamente cuando la red está más equivocada. El `1/p` de la cross-entropy disparándose y el
 jacobiano de softmax encogiéndose se cancelan **exactamente**.
 
 Esa es toda la razón por la que los clasificadores se construyen así, y es por lo que la demo de
@@ -2074,7 +2074,7 @@ de la peor manera, ya que la red seguiría entrenando, solo que mal. Así que
 ```csharp
 var net = new Sequential(inputs: 784)
     .Dense<Tanh>(128)
-    .SoftmaxOutput(10)      // Dense<Identity> + entropía cruzada con softmax, emparejadas correctamente
+    .SoftmaxOutput(10)      // Dense<Identity> + softmax cross-entropy, emparejadas correctamente
     .Build();
 ```
 
@@ -2098,7 +2098,7 @@ net.LossFunction.Name;   // "softmax-cross-entropy"
 **Está verificada por gradiente.** Una cancelación tan cómoda es exactamente el tipo de álgebra que
 es fácil hacer *casi* bien, y el argumento del §21 se aplica con toda su fuerza: un gradiente casi
 correcto sigue entrenando. `SoftmaxGradientTests` ejecuta la misma comprobación por diferencias
-finitas, incluida la curva en U de precisión, contra la fórmula fusionada. Esa prueba es la
+finitas, incluida la curva en U del error relativo, contra la fórmula fusionada. Esa prueba es la
 diferencia entre creerse la derivación y saberla.
 
 ### La pérdida viaja con el modelo
@@ -2121,7 +2121,7 @@ cargándose, como MSE, que es lo que eran (§19).
 | **z (preactivación / logit)** | La suma ponderada, antes de aplicar la activación |
 | **a (activación)** | `g(z)` — la salida de la unidad |
 | **δ (delta)** | `dL/dz` — el gradiente tras pasar de vuelta por la activación |
-| **Gradiente** | Vector de derivadas: hacia dónde se sube, y con qué pendiente |
+| **Gradiente** | Vector de derivadas: dirección de mayor aumento de la pérdida y magnitud de esa pendiente |
 | **Pérdida (loss)** | Un único número que mide cuán equivocadas están las predicciones |
 | **Forward pass** | Entrada → predicción |
 | **Backward pass** | Pérdida → gradientes para cada parámetro |
@@ -2129,7 +2129,8 @@ cargándose, como MSE, que es lo que eran (§19).
 | **Mini-batch** | Un grupo de ejemplos cuyos gradientes se promedian en una actualización |
 | **Learning rate (η)** | Tamaño del paso del descenso de gradiente |
 | **Fan-in / fan-out** | Número de entradas a / salidas de una capa; fija la escala de inicialización |
-| **Rotura de simetría** | Inicialización aleatoria que permite a las unidades aprender características distintas |
+| **Features** | Variables de entrada o representaciones intermedias que la red usa para predecir |
+| **Ruptura de simetría** | Inicialización aleatoria que permite a las unidades aprender características distintas |
 | **Linealmente separable** | Separable por una sola recta/plano (AND sí, XOR no) |
 | **Saturación** | Una activación clavada en su extremo plano, donde el gradiente ≈ 0 |
 | **Gradiente que se desvanece** | Gradientes que encogen hacia cero con la profundidad, estancando las primeras capas |
@@ -2137,8 +2138,8 @@ cargándose, como MSE, que es lo que eran (§19).
 | **Sobreajuste (overfitting)** | Memorizar los datos de entrenamiento en lugar de aprender patrones generalizables |
 | **Hiperparámetro** | Un valor que eliges en lugar de aprender (learning rate, tamaños de capa, épocas) |
 | **Softmax** | Convierte logits en una distribución de probabilidad que suma 1 (§27) |
-| **Entropía cruzada** | Pérdida que puntúa la probabilidad asignada a la clase correcta (§27) |
-| **Logit** | Puntuación cruda de la capa de salida, antes de softmax |
+| **Cross-entropy** | Pérdida que evalúa la probabilidad asignada a la clase correcta (§27) |
+| **Logit** | Score crudo de la capa de salida, antes de softmax |
 | **One-hot** | Objetivo codificado como todo ceros salvo un 1 en la clase correcta |
 | **SIMD** | Una instrucción de CPU que opera sobre 4–16 números simultáneamente |
-| **GEMM** | General Matrix Multiply — la operación por lotes sobre la que se construyen los frameworks reales |
+| **GEMM** | General Matrix Multiply — la operación batch sobre la que se construyen los frameworks reales |
