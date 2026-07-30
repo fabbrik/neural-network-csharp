@@ -99,3 +99,103 @@ public class GradientTests
         public static float DerivativeFromOutput(float a) => 1f + a * a;
     }
 }
+
+/// <summary>
+/// The one case where a large gradient-check error does <i>not</i> mean a broken backward pass.
+///
+/// <para>Finite differences assume the loss is smooth across [w−ε, w+ε]. ReLU has a kink at
+/// z = 0, so if a perturbation of ε pushes some unit's z across zero, the two loss evaluations
+/// straddle the corner and their difference measures the average of two different slopes. The
+/// analytic gradient is correct; the <i>numerical estimate</i> is not.</para>
+///
+/// <para>These tests pin the distinction the study guide (§21) draws between a kink artifact and
+/// a real bug: a real bug fails at every ε and for every activation, and a kink artifact does
+/// neither. Without them, a reader hitting this would have no way to tell which they were
+/// looking at — and the natural conclusion is that the library is broken.</para>
+/// </summary>
+public class ReLUKinkTests
+{
+    private static readonly float[] Input = [1f, 1f];
+    private static readonly float[] Target = [1f];
+
+    /// <summary>
+    /// One ReLU unit feeding an identity output, with parameters chosen so that
+    /// <c>z = w₀ + w₁ + b</c> sits <paramref name="distanceToKink"/> above zero. A perturbation
+    /// larger than that distance drags z across the corner.
+    /// </summary>
+    private static Network OneReluUnit(float distanceToKink)
+    {
+        var net = new Network(1, new Dense<ReLU>(2, 1), new Dense<Identity>(1, 1));
+
+        // w₀ = w₁ = 1 and x = [1, 1], so b positions z exactly.
+        float[] hidden = [1f, 1f, distanceToKink - 2f];
+        for (int p = 0; p < hidden.Length; p++) net.Layers[0].SetParameter(p, hidden[p]);
+
+        net.Layers[1].SetParameter(0, 1f);   // weight
+        net.Layers[1].SetParameter(1, 0f);   // bias
+
+        return net;
+    }
+
+    /// <summary>Tanh in the identical shape — same weights, same arithmetic, no corner.</summary>
+    private static Network OneTanhUnit(float z)
+    {
+        var net = new Network(1, new Dense<Tanh>(2, 1), new Dense<Identity>(1, 1));
+
+        float[] hidden = [1f, 1f, z - 2f];
+        for (int p = 0; p < hidden.Length; p++) net.Layers[0].SetParameter(p, hidden[p]);
+
+        net.Layers[1].SetParameter(0, 1f);
+        net.Layers[1].SetParameter(1, 0f);
+
+        return net;
+    }
+
+    /// <summary>
+    /// z sits 0.001 from the kink and the default ε is 0.01, so the check straddles the corner
+    /// and reports an error that would ordinarily condemn the backward pass.
+    /// </summary>
+    [Fact]
+    public void A_perturbation_across_the_kink_reports_a_large_error_despite_a_correct_gradient()
+    {
+        float error = GradientCheck.MaxRelativeError(OneReluUnit(0.001f), Input, Target);
+
+        Assert.True(error > 0.1f,
+            $"expected the kink artifact to look like a failure, got {error:E3}");
+    }
+
+    /// <summary>
+    /// The diagnostic that separates artifact from bug: shrink ε below the distance to the kink
+    /// and the error collapses. A genuinely wrong derivative stays O(1) at every ε — compare
+    /// <see cref="GradientTests.Gradient_check_detects_a_wrong_derivative"/>.
+    /// </summary>
+    [Fact]
+    public void Shrinking_epsilon_below_the_distance_to_the_kink_recovers_agreement()
+    {
+        Network net = OneReluUnit(0.001f);
+
+        float straddling = GradientCheck.MaxRelativeError(net, Input, Target, epsilon: 1e-2f);
+        float clear = GradientCheck.MaxRelativeError(net, Input, Target, epsilon: 1e-4f);
+
+        Assert.True(clear < straddling / 3f,
+            $"a smaller ε should escape the corner: {straddling:E3} -> {clear:E3}");
+    }
+
+    /// <summary>The second diagnostic: the same shape with a smooth activation passes cleanly.</summary>
+    [Fact]
+    public void The_same_network_shape_with_tanh_shows_no_such_error()
+    {
+        float error = GradientCheck.MaxRelativeError(OneTanhUnit(0.001f), Input, Target);
+
+        Assert.True(error < 1e-3f, $"tanh has no corner to straddle, but got {error:E3}");
+    }
+
+    /// <summary>And a ReLU unit comfortably clear of the kink checks out at the default ε.</summary>
+    [Fact]
+    public void A_relu_unit_far_from_the_kink_passes_normally()
+    {
+        float error = GradientCheck.MaxRelativeError(OneReluUnit(1f), Input, Target);
+
+        Assert.True(error < 1e-3f, $"max relative error {error:E3} exceeds 1e-3");
+    }
+}

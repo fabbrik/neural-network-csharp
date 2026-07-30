@@ -32,6 +32,7 @@ public static class ModelIO
 {
     private static readonly byte[] Magic = "NNMODEL\0"u8.ToArray();
     private const int CurrentVersion = 1;
+    private static readonly object FactoriesLock = new();
 
     /// <summary>
     /// Maps a layer <see cref="ILayer.Descriptor"/> back to a constructor. A saved file names its
@@ -48,7 +49,13 @@ public static class ModelIO
         ["Dense<Step>"] = (i, u) => new Dense<Step>(i, u),
     };
 
-    /// <summary>Registers a custom layer type so <see cref="Load(string)"/> can reconstruct it.</summary>
+    /// <summary>
+    /// Registers a custom layer type so <see cref="Load(string)"/> can reconstruct it.
+    ///
+    /// <para>Mutates process-wide state. Access to the registration table is synchronized, but
+    /// registering custom layer types during start-up is still the clearest policy: it avoids
+    /// load behavior depending on timing.</para>
+    /// </summary>
     /// <param name="descriptor">Must match the layer's <see cref="ILayer.Descriptor"/>.</param>
     /// <param name="factory">Builds the layer given (inputs, units).</param>
     public static void Register(string descriptor, Func<int, int, ILayer> factory)
@@ -56,7 +63,8 @@ public static class ModelIO
         ArgumentException.ThrowIfNullOrWhiteSpace(descriptor);
         ArgumentNullException.ThrowIfNull(factory);
 
-        Factories[descriptor] = factory;
+        lock (FactoriesLock)
+            Factories[descriptor] = factory;
     }
 
     /// <summary>Writes <paramref name="network"/> to <paramref name="path"/>, overwriting it.</summary>
@@ -130,7 +138,11 @@ public static class ModelIO
                 throw new InvalidDataException($"Model file is truncated: ran out of data at layer {i} of {count}.", e);
             }
 
-            if (!Factories.TryGetValue(descriptor, out Func<int, int, ILayer>? factory))
+            Func<int, int, ILayer>? factory;
+            lock (FactoriesLock)
+                Factories.TryGetValue(descriptor, out factory);
+
+            if (factory is null)
                 throw new InvalidDataException(
                     $"Unknown layer type '{descriptor}' in layer {i}. Call ModelIO.Register to add it.");
 

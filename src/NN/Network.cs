@@ -6,13 +6,28 @@ namespace NN;
 ///
 /// All working buffers are allocated once in the constructor, so training allocates nothing
 /// per example — only the shuffled index array is per-network state.
+///
+/// <para><b>Not thread-safe, and it lends out its buffers.</b> Those two facts are related and
+/// both matter:</para>
+/// <list type="bullet">
+///   <item><description>One instance cannot be trained or queried from two threads at once —
+///   the activation buffers, gradient accumulators and shuffle order are all shared mutable
+///   state. Give each thread its own <see cref="Network"/>.</description></item>
+///   <item><description><see cref="Predict"/> returns a view of an internal buffer that the
+///   <i>next</i> call overwrites. Copy it (<c>.ToArray()</c>) if you need to keep it, and never
+///   hold two prediction results at once.</description></item>
+/// </list>
 /// </summary>
 public sealed class Network
 {
     private readonly ILayer[] _layers;
     private readonly float[][] _activations;   // _activations[i] = output of layer i
     private readonly float[][] _grads;         // _grads[i]       = dL/da for layer i's outputs
-    private readonly Random _rng;
+
+    // Two generators on purpose. Weight initialization draws as many numbers as the network has
+    // parameters, so a single shared generator would make the shuffle sequence depend on the
+    // architecture — resize a hidden layer and the batch composition silently changes too.
+    private readonly Random _shuffleRng;
     private int[] _order = [];
 
     public int Inputs => _layers[0].Inputs;
@@ -44,16 +59,18 @@ public sealed class Network
                     $"Layer {i} takes {layers[i].Inputs} inputs but layer {i - 1} emits {layers[i - 1].Units}.", nameof(layers));
 
         _layers = layers;
-        _rng = new Random(seed);
+        _shuffleRng = new Random(seed);
         _activations = new float[layers.Length][];
         _grads = new float[layers.Length][];
+
+        var initRng = new Random(seed);
 
         for (int i = 0; i < layers.Length; i++)
         {
             _activations[i] = new float[layers[i].Units];
             _grads[i] = new float[layers[i].Units];
 
-            if (initialize) layers[i].Initialize(_rng);
+            if (initialize) layers[i].Initialize(initRng);
         }
     }
 
@@ -63,9 +80,18 @@ public sealed class Network
     /// </summary>
     internal static Network FromTrainedLayers(ILayer[] layers) => new(seed: 0, layers, initialize: false);
 
-    /// <summary>Runs one example through the stack and returns the output buffer (owned by the network — copy it if you keep it).</summary>
+    /// <summary>
+    /// Runs one example through the stack and returns the output buffer, which is owned by the
+    /// network and overwritten by the next call — copy it if you need to keep it.
+    ///
+    /// <para>Inference only: it disturbs no training state, so it is safe to call in the middle
+    /// of a gradient accumulation (to log a prediction, say) without corrupting the pending
+    /// backward pass.</para>
+    /// </summary>
     public ReadOnlySpan<float> Predict(ReadOnlySpan<float> x)
     {
+        if (x.Length != Inputs) throw new ArgumentException($"Expected {Inputs} inputs, got {x.Length}.", nameof(x));
+
         _layers[0].Forward(x, _activations[0]);
 
         for (int i = 1; i < _layers.Length; i++)
@@ -114,9 +140,15 @@ public sealed class Network
             layer.ZeroGradients();
     }
 
-    /// <summary>Mean squared error for one example, without touching gradients.</summary>
+    /// <summary>
+    /// Mean squared error for one example. Touches no training state — neither the gradient
+    /// accumulators nor the backward pass's activation cache — which is what lets
+    /// <see cref="GradientCheck"/> evaluate the loss thousands of times mid-check.
+    /// </summary>
     public float Loss(ReadOnlySpan<float> x, ReadOnlySpan<float> y)
     {
+        if (y.Length != Outputs) throw new ArgumentException($"Expected {Outputs} targets, got {y.Length}.", nameof(y));
+
         ReadOnlySpan<float> a = Predict(x);
         float loss = 0f;
 
@@ -135,7 +167,16 @@ public sealed class Network
     /// </summary>
     public float AccumulateGradients(ReadOnlySpan<float> x, ReadOnlySpan<float> y)
     {
-        ReadOnlySpan<float> a = Predict(x);
+        if (y.Length != Outputs) throw new ArgumentException($"Expected {Outputs} targets, got {y.Length}.", nameof(y));
+
+        // ForwardTrain, not Predict: the backward pass below needs each layer to have cached the
+        // inputs and activations of *this* example.
+        _layers[0].ForwardTrain(x, _activations[0]);
+
+        for (int i = 1; i < _layers.Length; i++)
+            _layers[i].ForwardTrain(_activations[i - 1], _activations[i]);
+
+        ReadOnlySpan<float> a = _activations[^1];
 
         // MSE = mean over outputs of (a - y)²  →  dL/da = 2(a - y) / outputs
         int last = _layers.Length - 1;
@@ -176,9 +217,27 @@ public sealed class Network
         int batchSize = 0,
         Action<int, float>? onEpoch = null)
     {
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(epochs);
+        if (float.IsNaN(learningRate) || float.IsInfinity(learningRate) || learningRate < 0f)
+            throw new ArgumentOutOfRangeException(nameof(learningRate), learningRate, "Learning rate must be finite and non-negative.");
+        ArgumentOutOfRangeException.ThrowIfNegative(batchSize);
+
+        // Validate both operands against each other. Deriving the sample count from y alone and
+        // trusting x to match is how a mismatched pair turns into a slice exception thousands of
+        // examples into training, or — worse — into silent training on misaligned rows.
+        if (y.Length % Outputs != 0)
+            throw new ArgumentException(
+                $"Targets length {y.Length} is not a multiple of the {Outputs} network outputs.", nameof(y));
+
         int samples = y.Length / Outputs;
         if (samples == 0) throw new ArgumentException("No samples.", nameof(y));
-        if (batchSize <= 0) batchSize = samples;   // 0 means full batch
+
+        if (x.Length != samples * Inputs)
+            throw new ArgumentException(
+                $"Targets describe {samples} examples, so inputs should be {samples * Inputs} floats " +
+                $"({samples} × {Inputs}), but got {x.Length}.", nameof(x));
+
+        if (batchSize == 0) batchSize = samples;   // 0 means full batch
 
         if (_order.Length != samples)
         {
@@ -190,7 +249,7 @@ public sealed class Network
 
         for (int epoch = 1; epoch <= epochs; epoch++)
         {
-            _rng.Shuffle(_order);
+            _shuffleRng.Shuffle(_order);
             epochLoss = 0f;
 
             for (int start = 0; start < samples; start += batchSize)

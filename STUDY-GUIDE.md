@@ -20,7 +20,9 @@ backpropagation, which is the one concept everything else depends on.
 | [`Sequential.cs`](src/NN/Sequential.cs) | Keras-style fluent builder with input-size inference |
 | [`ModelIO.cs`](src/NN/ModelIO.cs) | Saving and loading trained models |
 | [`GradientCheck.cs`](src/NN/GradientCheck.cs) | Finite-difference verification of the backward pass |
-| [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptron on AND, network on XOR |
+| [`Datasets.cs`](src/NN/Datasets.cs) | Generated two-moons data, for train/test experiments |
+| [`Program.cs`](src/NN.Demo/Program.cs) | Demos: perceptron, XOR, save/load, gradient check, two moons |
+| [`bench/`](bench/README.md) | Benchmarks behind every performance claim below |
 
 ---
 
@@ -55,7 +57,7 @@ backpropagation, which is the one concept everything else depends on.
 
 **Part III — Practice**
 
-22. [Results](#22-results)
+22. [Results — XOR, the two moons, and overfitting](#22-results)
 23. [Debugging playbook](#23-debugging-playbook)
 24. [Exercises](#24-exercises)
 25. [What this implementation does *not* do](#25-what-this-implementation-does-not-do)
@@ -64,6 +66,12 @@ backpropagation, which is the one concept everything else depends on.
 
 > **If you only read three sections:** §7 and §8 (backpropagation worked by hand) and §21
 > (how you know it's right).
+>
+> **Where the claims are checked.** Every performance claim in Part II links to a measurement in
+> [`bench/README.md`](bench/README.md), including [one that turned out to be
+> false](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong) and is
+> corrected in §11. Numbers in this guide come from an Apple M3 Pro on .NET 10; see the note at the
+> top of §22 on why yours may differ in the last digits.
 
 ---
 ---
@@ -496,7 +504,7 @@ Every layer, without exception, does:
 3. `dL/dW += δ × input`, `dL/db += δ` — record the parameter gradients.
 4. `dL/dinput = δ × W` — hand backwards to the layer below, which returns to step 1.
 
-**With 2 layers or 200, that loop is the entire algorithm.** [`Dense.Backward`](src/NN/Dense.cs#L132)
+**With 2 layers or 200, that loop is the entire algorithm.** [`Dense.Backward`](src/NN/Dense.cs)
 is a literal transcription of those four lines.
 
 ### Why it's efficient
@@ -517,7 +525,7 @@ update rule.
 $$w \mathrel{+}= \eta\,(y - \hat{y})\,x$$
 
 Since the step function outputs only 0 or 1, the error `(y - ŷ)` is always −1, 0, or +1:
-"too high," "correct," or "too low." [`Perceptron.Train`](src/NN/Perceptron.cs#L29) skips correct predictions
+"too high," "correct," or "too low." [`Perceptron.Train`](src/NN/Perceptron.cs) skips correct predictions
 entirely and stops early once a full epoch passes with no updates.
 
 **The convergence theorem:** if the data is *linearly separable* — separable by a single
@@ -600,9 +608,28 @@ The activation is a **type parameter**, not a field. `Dense<Tanh>` and `Dense<Si
 different types, and the JIT compiles separate machine code for each, inlining the activation
 directly into the loop.
 
-The obvious alternative — a `Func<float, float>` field — costs an indirect call for every unit
-of every layer of every example, and the compiler can't inline through it. This pattern gets
-the flexibility for free.
+The obvious alternative is a `Func<float, float>` field. It costs an indirect call for every unit
+of every layer of every example, and the compiler can't inline through it.
+
+> **An earlier draft of this guide told you that made it slower. It doesn't, and the correction is
+> more instructive than the original claim.** Benchmarked against a delegate-dispatched layer, the
+> generic version is faster by 0–6% — noise at any realistic size ([full table](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong)).
+>
+> The reason is a ratio, not a dispatch cost. The activation runs **once per unit**; the dot
+> product feeding it runs `Inputs` multiply-adds per unit. On a 784-input layer, one un-inlinable
+> call is amortized over 784 fused multiply-adds — it is invisible because it is *rare*, not
+> because it is fast. The first suspicion was that tanh, a transcendental, was hiding the call, so
+> the benchmark repeats it with ReLU (a compare and a select). The result barely moves.
+>
+> **The lesson generalizes past this repo:** "un-inlinable indirect call" is a statement about
+> codegen, and "slower" is a statement about the program. Getting from one to the other requires
+> knowing how often the call happens relative to everything else — which is what a profiler tells
+> you and intuition does not. This is also §12 in miniature: the effects that matter are the ones
+> in the innermost loop, and the activation isn't in it.
+
+So keep the generic design, but for its real merits: `readonly struct` activations compose at zero
+cost, nothing allocates, and the type system prevents `Dense<Tanh>` and `Dense<ReLU>` from being
+confused. Not for speed.
 
 The enabling feature is **static abstract interface members** (C# 11):
 
@@ -643,7 +670,7 @@ Weights = [ unit0: w00 w01 w02 | unit1: w10 w11 w12 | unit2: ... ]
 ```
 
 Unit `j`'s weights are `Weights[j * Inputs .. (j+1) * Inputs]` — **contiguous**.
-See [`Dense.UnitWeights`](src/NN/Dense.cs#L62).
+See [`Dense.UnitWeights`](src/NN/Dense.cs).
 
 ### Why this matters so much
 
@@ -659,9 +686,39 @@ multiply costs one.
 > **Rule of thumb:** arrange data so the innermost loop walks consecutive addresses. This one
 > habit is worth more than every other optimization in this file combined.
 
+### What it's actually worth — and where it's worth nothing
+
+That rule of thumb is a strong claim, so it's measured. Same weights, same arithmetic, same
+activation; the only difference is memory order ([details](bench/README.md#2-weight-layout-unit-major-vs-feature-major)):
+
+| Layer shape | Unit-major (contiguous) | Feature-major (strided) | Cost of striding |
+|---|---|---|---|
+| **2 × 4** — the XOR layer | 16.0 ns | 13.9 ns | **0.87× — striding *wins*** |
+| 64 × 64 | 727 ns | 3306 ns | **4.6×** |
+| 784 × 128 — MNIST-sized | 12.8 µs | 75.9 µs | **5.9×** |
+
+At realistic sizes the claim holds comfortably: 4.6–5.9×, the largest single effect in the
+codebase, and larger than the SIMD win it partly enables.
+
+**But look at the first row.** On the XOR layer the "bad" layout is *faster*. Eight weights are 32
+bytes — they fit inside one 64-byte cache line, so there is no wasted bandwidth to save and no
+gather to avoid. All that remains is the SIMD path's loop setup, which the plain strided loop
+skips.
+
+This is worth dwelling on, because the XOR demo is the first thing you run:
+
+> **Every optimization in this guide is worth nothing at the scale of the example that introduces
+> it.** Cache behaviour is a property of data that doesn't fit in cache. Vectorization is a
+> property of loops long enough to amortize their setup. Below those thresholds you are measuring
+> overhead, and the "obviously worse" implementation frequently wins.
+>
+> The corollary is the useful one: **the size at which you benchmark determines the answer you
+> get.** A benchmark of the XOR layer would have told you to delete the contiguous layout.
+
 **One flat array, not jagged.** `float[]` beats `float[][]` here: one allocation instead of
 `j`, one bounds check instead of two, no pointer chase per unit, and the whole matrix sits in
-one contiguous block the prefetcher can stream.
+one contiguous block the prefetcher can stream. (Not separately benchmarked — the jagged variant
+would confound layout with allocation, and the flat array is no harder to write.)
 
 ---
 
@@ -710,7 +767,7 @@ descent needs a slope to follow; a staircase has none.
 
 ## 14. The forward pass in code
 
-[`Dense.Forward`](src/NN/Dense.cs#L89):
+[`Dense.Forward`](src/NN/Dense.cs):
 
 ```csharp
 for (int j = 0; j < Units; j++)
@@ -718,21 +775,55 @@ for (int j = 0; j < Units; j++)
     float z = SimdOps.Dot(w.Slice(j * Inputs, Inputs), aIn) + Bias[j];
     aOut[j] = TActivation.Apply(z);
 }
-
-aIn.CopyTo(_lastInput);     // cached for backprop
-aOut.CopyTo(_lastOutput);
 ```
 
 Line for line, this is §2: slice the unit's weights, dot with the input, add bias, activate.
 Compare it to the original NumPy and the correspondence is exact — only the layout changed.
 
-**Why the caching at the bottom.** Backprop needs both the inputs that produced these
-activations (for `dL/dW = δ × input`) and the activations themselves (for `g'` from `a`).
+### The two forward passes, and the bug that split them
 
-This is the memory cost of training, and it's worth understanding: **you cannot free forward
-activations until the backward pass has consumed them.** It's the main reason training a large
-model needs far more memory than running one, and why "batch size too large" means
-out-of-memory in practice.
+Backprop needs both the inputs that produced these activations (for `dL/dW = δ × input`) and the
+activations themselves (for `g'` from `a`). So something has to cache them, and the obvious place
+is the bottom of `Forward`:
+
+```csharp
+aIn.CopyTo(_lastInput);      // what the code used to do
+aOut.CopyTo(_lastOutput);
+```
+
+**That is a trap, and it is worth understanding because the same shape appears everywhere.** The
+cache is written by `Forward` but read by `Backward`, an arbitrary distance later. Anything that
+runs a forward pass in between overwrites it. And plenty of reasonable things do:
+
+```csharp
+net.AccumulateGradients(x, y);
+Console.WriteLine(net.Predict(somethingElse)[0]);   // ← silently destroys the cache
+net.ApplyGradients(lr, 1);                          //   gradients now describe the wrong example
+```
+
+Nothing throws. The loss still falls. The network just learns something subtly wrong — which is
+exactly the failure mode §21 exists to catch, arriving by a different route.
+
+The fix is to make it unrepresentable rather than to document it. There are now two methods:
+
+| | caches? | used by |
+|---|---|---|
+| `Forward` | no | `Predict`, `Loss`, `ForwardBatch`, `GradientCheck` — all inference |
+| `ForwardTrain` | yes | `AccumulateGradients` only |
+
+`Backward` consumes the cache and clears it, so a second `Backward`, or one with no preceding
+`ForwardTrain`, throws instead of quietly differentiating a stale example. `GradientCheck` depends
+on this directly: it evaluates the loss twice per parameter while analytic gradients sit in the
+accumulators, which is only safe because `Loss` cannot touch training state.
+
+> **The general lesson:** when a method's *side effect* is consumed by a different method later,
+> the coupling is invisible at both call sites. Prefer splitting the method over documenting the
+> ordering. A comment saying "don't call `Predict` here" is a bug waiting for someone who didn't
+> read it.
+
+**The memory cost.** The cache is also why training needs far more memory than inference: **you
+cannot free forward activations until the backward pass has consumed them.** That is what "batch
+size too large" means in practice — out of memory, holding every example's activations at once.
 
 ---
 
@@ -766,7 +857,7 @@ x86.
 > **not** a variable-length mathematical vector. It's a fixed-width hardware register. It cannot
 > store a layer's weights — it's a pipe you stream data through, `Count` floats at a time.
 
-### The dot product ([`SimdOps.Dot`](src/NN/SimdOps.cs#L15))
+### The dot product ([`SimdOps.Dot`](src/NN/SimdOps.cs))
 
 ```csharp
 var acc0 = Vector<float>.Zero;
@@ -789,9 +880,45 @@ one extra register.
 **The scalar tail** handles a length that isn't a multiple of the SIMD width. Every
 hand-written SIMD loop needs one; forgetting it silently drops the last few elements.
 
+### Does any of it work?
+
+Both claims above — that vectorizing pays, and that the second accumulator pays *again* — are
+benchmarked against a scalar loop and against a single-accumulator SIMD version
+([details](bench/README.md#1-simd-and-the-second-accumulator)):
+
+| Length | Scalar | 1 accumulator | 2 accumulators | SIMD win | 2nd accumulator win |
+|---|---|---|---|---|---|
+| 8 | 4.25 ns | 1.27 ns | 1.54 ns | 2.8× | **0.83× — worse** |
+| 64 | 37.9 ns | 9.87 ns | 8.02 ns | 4.7× | **1.23×** |
+| 512 | 357 ns | 78.8 ns | 59.3 ns | 6.0× | **1.33×** |
+| 4096 | 2975 ns | 713 ns | 481 ns | 6.2× | **1.48×** |
+
+Three things to notice.
+
+**The SIMD win exceeds the vector width.** `Vector<float>` is only 4 wide on the ARM machine these
+numbers come from, yet the speedup reaches 6.2×. Vectorizing doesn't just do 4 multiplies at once
+— it also quarters the loop bookkeeping and the bounds checks. Getting *more* than the width is
+normal; the width is a floor, not a ceiling.
+
+**The second accumulator earns its keep at any useful length.** At 1.2–1.5× it is the
+second-largest optimization in the codebase after data layout, which is a lot for one extra
+register.
+
+**And at length 8 it actively costs 17%.** Eight floats is exactly two 4-wide vectors: the
+two-accumulator loop runs its body once and drops straight into the tail, paying all of the setup
+and recovering none of the pipelining. The same size-threshold story as §12, but sharper — here
+the "optimization" doesn't merely stop helping, it starts hurting.
+
+> **A footnote worth more than the table.** Under .NET 9 that first row was a dead heat; on .NET 10
+> the single-accumulator version pulled ahead. Nothing in `SimdOps.cs` changed — the JIT did.
+> **Micro-optimizations are measured against a runtime, not against physics**, and a runtime
+> upgrade can flip the sign of an effect while your source sits still. This is the argument for
+> keeping benchmarks *in the repository* and re-running them, rather than measuring once and
+> writing the number into a comment where it quietly goes stale.
+
 ### `AddScaled` — `dest += src × scale`
 
-[`SimdOps.AddScaled`](src/NN/SimdOps.cs#L47) is the workhorse of the *backward* pass. Notice from §8
+[`SimdOps.AddScaled`](src/NN/SimdOps.cs) is the workhorse of the *backward* pass. Notice from §8
 that steps 3 and 4 are both "add a scaled vector into an accumulator" — the same primitive
 serves weight-gradient accumulation, input-gradient propagation, and the descent step itself.
 
@@ -806,7 +933,7 @@ gets exactly one copy.
 
 ## 16. The backward pass in code
 
-[`Dense.Backward`](src/NN/Dense.cs#L132) — §8's four-step pattern, transcribed:
+[`Dense.Backward`](src/NN/Dense.cs) — §8's four-step pattern, transcribed:
 
 ```csharp
 for (int j = 0; j < Units; j++)
@@ -841,7 +968,7 @@ also flags a real failure mode — see §23.
 ### Accumulate now, apply later
 
 `Backward` only **adds into** `_weightGrads`. It never touches `Weights`.
-[`ApplyGradients`](src/NN/Dense.cs#L165) performs the actual descent step and clears the accumulators:
+[`ApplyGradients`](src/NN/Dense.cs) performs the actual descent step and clears the accumulators:
 
 $$W \mathrel{-}= \eta \cdot \frac{1}{\text{batchSize}}\frac{\partial L}{\partial W}$$
 
@@ -857,7 +984,7 @@ this will look familiar.
 
 ## 17. Weight initialization — genuinely not optional
 
-[`Dense.Initialize`](src/NN/Dense.cs#L75) uses **Xavier/Glorot uniform**:
+[`Dense.Initialize`](src/NN/Dense.cs) uses **Xavier/Glorot uniform**:
 
 $$W \sim \mathcal{U}\left(-\sqrt{\tfrac{6}{n_{in} + n_{out}}},\; +\sqrt{\tfrac{6}{n_{in} + n_{out}}}\right)$$
 
@@ -914,7 +1041,7 @@ public float Predict(ReadOnlySpan<float> x)
 }
 ```
 
-The training loop ([`Perceptron.Train`](src/NN/Perceptron.cs#L29)) is the 1958 rule verbatim:
+The training loop ([`Perceptron.Train`](src/NN/Perceptron.cs)) is the 1958 rule verbatim:
 
 ```csharp
 float error = y[i] - Predict(xi);
@@ -1089,6 +1216,41 @@ The constructor validates that adjacent layer shapes match — layer `i`'s `Inpu
 layer `i-1`'s `Units` — and fails immediately with a clear message rather than producing
 nonsense later. It also pre-allocates every buffer, so training allocates nothing per example.
 
+### Threading, and who owns the buffers
+
+Those pre-allocated buffers are what make training allocation-free, and they are also the reason
+for two rules that the API cannot enforce for you.
+
+**One network per thread.** `Network` and `Dense` hold mutable activation buffers, gradient
+accumulators, the forward-pass cache, and the shuffle order. None of it is synchronized, and none
+of it is safe to share. Two threads calling `Predict` on one network will interleave writes into
+the same activation array and both get nonsense — with no exception, because nothing is
+technically wrong at the type level.
+
+The one exception is `Dense.Forward` on a standalone layer, which after the §14 split writes no
+instance state at all. `Network.Predict` still writes shared activation buffers, so one network per
+thread remains the rule. (§25 item 4 notes that the library never *uses* threads either — there's
+no `Parallel.For` anywhere.)
+
+**`Predict` lends you a buffer; it doesn't give you one.**
+
+```csharp
+ReadOnlySpan<float> a = net.Predict(x1);
+ReadOnlySpan<float> b = net.Predict(x2);   // a and b are the SAME memory — both now hold x2's result
+```
+
+The returned span views `_activations[^1]`, which the next forward pass overwrites. Copy it if you
+need to keep it:
+
+```csharp
+float[] kept = net.Predict(x1).ToArray();
+```
+
+This is the standard trade for zero-allocation APIs, and `Span<T>` is exactly the type that makes
+it explicit — see §11. `ModelIO.Register` has the same character at process scope: table access is
+synchronized, but registering custom layer types during start-up keeps load behavior independent
+of timing.
+
 ---
 
 ## 20. The training loop
@@ -1116,6 +1278,17 @@ The default here is full batch, since XOR has four examples.
 
 Averaging over a batch reduces gradient noise — individual examples disagree about the best
 direction, and averaging finds their consensus.
+
+The two-moons section of the demo is where this becomes visible (§22): 1000 examples at batch
+size 32 gives ~31 updates per epoch, so 150 epochs is 4650 updates. XOR's 4000 epochs are 4000
+updates. **Epochs are not the unit that matters** — updates are, and the ratio between them is
+the batch size.
+
+Note that mini-batching is currently a *statistical* device here, not a performance one. Real
+frameworks batch because it lets one loaded weight block serve many examples at once; this
+library still walks the weights once per example either way, which is why
+[`ForwardBatch` measures no faster than a loop](bench/README.md#4-forwardbatch--a-deliberate-null-result)
+(§25 item 1).
 
 ### Epochs
 
@@ -1149,7 +1322,7 @@ for training — two full forward passes *per parameter* — but perfect for ver
 **central** difference (both directions) has O(ε²) error versus O(ε) for the one-sided version,
 which easily repays the second evaluation.
 
-### The measured result, and why it proves correctness
+### The measured result, and what it verifies
 
 | ε | max relative error | dominated by |
 |---|---|---|
@@ -1158,9 +1331,9 @@ which easily repays the second evaluation.
 | 1e-3 | 1.7e-3 | roundoff creeping in |
 | 1e-4 | 1.5e-2 | float32 roundoff — `L(w+ε)` and `L(w−ε)` nearly identical |
 
-**The U-shape *is* the proof.** Two error sources fight each other: large ε is a poor
-approximation of a derivative, while small ε subtracts two nearly-equal floats and loses
-precision catastrophically. A correct gradient shows this tradeoff with a sweet spot in the
+**The U-shape is the evidence you want.** Two error sources fight each other: large ε is a poor
+approximation of a derivative, while small ε subtracts two nearly-equal floats and loses precision
+catastrophically. A correct implemented gradient shows this tradeoff with a sweet spot in the
 middle. **A wrong gradient shows O(1) error at every ε** — no sweet spot, because it isn't
 approximating anything.
 
@@ -1190,6 +1363,47 @@ The checks run as real tests (`dotnet test`), including two that are easy to ove
   depends on. The threshold is loosened for the deeper test — but it still separates a correct
   gradient from a broken one by more than an order of magnitude.
 
+### The ReLU exception — when a failing check is *not* a bug
+
+The rule above says "gradient-check it before trusting it." There is one case where the check
+fails on correct code, and you need to know it before it happens to you, because the natural
+conclusion is that your backward pass is broken.
+
+**Finite differences assume the loss is smooth between `w−ε` and `w+ε`. ReLU isn't.** It has a
+kink at `z = 0`. If nudging a weight by ε pushes some unit's `z` across zero, the two loss
+evaluations sit on opposite sides of the corner:
+
+```
+            L
+            │        ╱          ε = 0.01, and z sits 0.001 above the kink.
+            │      ╱
+            │    ╱              L(w+ε) is on the sloped side.
+   ─────────┼──╱                L(w−ε) is on the flat side.
+            │ ╱
+    ────────┴╱                  Their difference measures the AVERAGE of two
+         kink                    different slopes — not the derivative at w.
+```
+
+The analytic gradient is **right**. The *numerical estimate* is wrong. Measured on exactly that
+setup — one ReLU unit with `z` 0.001 from the kink:
+
+| ε | max relative error | what it means |
+|---|---|---|
+| 1e-2 (default) | **2.9e-1** | straddles the corner — looks like a total failure |
+| 1e-4 | 8.8e-2 | ε now smaller than the distance to the kink; recovering |
+
+Compare a genuinely broken derivative, which sits above 1e-1 at *every* ε and for *every*
+activation. That gives you two diagnostics for telling them apart:
+
+1. **Shrink ε.** A kink artifact improves sharply; a real bug doesn't move.
+2. **Swap the activation.** Rebuild the same network shape with tanh. The layer arithmetic under
+   test is identical, and tanh has no corner to straddle — measured 4.1e-4 on the shape above. If
+   tanh passes and ReLU doesn't, you found a kink, not a bug.
+
+Both behaviours are pinned by tests (`ReLUKinkTests`), so this stays true. It's a known limitation
+of the technique rather than of this code, which is why production checks favour smooth
+activations even when the deployed network uses ReLU.
+
 ---
 ---
 
@@ -1198,6 +1412,20 @@ The checks run as real tests (`dotnet test`), including two that are easy to ove
 ---
 
 ## 22. Results
+
+> **Why your digits may differ.** Every number in this guide was produced on an **Apple M3 Pro,
+> .NET 10, ARM64** (`Vector<float>.Count == 4`). Float addition is not associative — `(a+b)+c` and
+> `a+(b+c)` can differ in the last bits — and the SIMD dot product sums in an order that depends on
+> the vector width, which is 8 on AVX2 and 16 on AVX-512. So the same source, same seed, and same
+> data can produce slightly different trailing digits on x86, and those differences compound over
+> 4000 epochs.
+>
+> Expect the last digits to move. Expect the conclusions not to: no result here depends on a digit
+> that isn't stable. CI runs on both ARM and x86 for exactly this reason. This is worth
+> internalizing generally — **bit-for-bit reproducibility across machines is not something
+> floating-point code gives you for free**, and chasing it is a common waste of time.
+
+### XOR-scale
 
 ```
 Perceptron on AND: converged in 4 epochs      ← linearly separable
@@ -1213,6 +1441,77 @@ Gradient check: max relative error = 3.521E-004
 
 The XOR outputs aren't exactly 0 and 1 because sigmoid only *approaches* its limits — reaching
 1.0 exactly would need infinite weights. 0.98 means "confidently 1."
+
+### Beyond XOR — the two moons
+
+XOR proves the hidden layer defeats Minsky and Papert, and that is *all* it can prove. With four
+noise-free examples and no held-out data there is no way to demonstrate the three things that
+dominate practical training:
+
+| | why XOR can't show it |
+|---|---|
+| **Mini-batching** | Four examples is one full batch. Every "epoch" is a single update. |
+| **Generalization** | The four points *are* the problem. There is nothing held out to generalize to. |
+| **Overfitting** | Nothing to memorize. |
+
+So the demo's last two sections use [`Datasets.Moons`](src/NN/Datasets.cs): two interleaving
+crescents with Gaussian noise, 1500 points, split 1000 train / 500 test. Generated rather than
+downloaded — no data files, no network access, identical on every machine for a given seed.
+
+A 2 → 16 → 16 → 1 network, batch size 32, learning rate 0.3:
+
+```
+  epoch   train loss   train acc   test acc
+      1       0.1511      83.9%     85.2%
+     30       0.0383      95.9%     96.4%
+     90       0.0190      97.6%     96.0%
+    150       0.0177      98.1%     96.4%
+```
+
+**Test accuracy tracking train accuracy is what generalization looks like.** Note also that
+neither reaches 100% and that this is correct: at this noise level the crescents genuinely
+overlap, so some points are unclassifiable and a model scoring 100% would be a model that
+memorized them.
+
+Note the epoch counts against XOR's 4000. There are ~31 updates per epoch here rather than one,
+which is the distinction from §20 made concrete: **4650 updates, not 150.**
+
+The learned boundary, sampled across the plane:
+
+```
+  #####################################################·······
+  ##################################################··········
+  ###############################################·············
+  #####################······###################··············
+  ###################··········###############················
+  #################··············############·················
+  ################··················#######···················
+  ##############··············································
+  ############················································
+  #########···················································
+```
+
+That curve is the entire argument for hidden layers, drawn to scale. A perceptron can only put a
+straight line on this picture — and the test suite asserts it does measurably worse.
+
+### Overfitting, deliberately
+
+Same problem, same demo: 4417 parameters trained on **20** points — 221× more knobs than data.
+
+```
+  epoch    train acc   test acc
+      1       85.0%     82.0%
+   1000       90.0%     86.4%
+   3000      100.0%     93.4%
+```
+
+Perfect on data it has seen; **93.4% on data it hasn't, against 96.4% for the smaller network
+given more data.** That gap is overfitting: capacity spent memorizing the noise in 20 points
+instead of learning the shape.
+
+The important part is what it took to see it. Training loss fell the whole way; nothing threw;
+the model looked *better* by every number available at training time. **Only the held-out split
+made it visible**, and nothing in this library computes one for you — §25 item 6.
 
 ---
 
@@ -1256,16 +1555,32 @@ Worked roughly in order of value. The "break it" ones teach the most.
 6. **Try ReLU** in the hidden layer. It may need a lower learning rate. Print each hidden unit's
    output across all four inputs to spot dead units.
 7. **Reproduce and then perturb the hidden-feature table in §3.** Cast `net.Layers[0]` to
-   `Dense<Tanh>`, call `Forward` on each of the four inputs, and print the results — you should
-   get exactly the numbers in §3. Now change the network's seed (`new Network(seed: 7, …)`) and
-   print again. You'll get a completely different, equally valid decomposition. This is the most
-   illuminating exercise here: it shows there's no single "correct" set of learned features.
-8. **Add momentum:** keep a velocity buffer per layer, `v = βv + grad` (β ≈ 0.9), and step along
-   `v`. Compare convergence speed.
-9. **Add cross-entropy loss.** For classification it beats MSE: with a sigmoid output the
-   `σ'(z)` factor cancels against the loss derivative, removing the slowdown that occurs when
-   the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient).
-10. **Implement `ForwardBatch` as a real tiled GEMM** (§25, item 1) and benchmark it.
+   `Dense<Tanh>`, call `Forward` on each of the four inputs, and print the results — on an ARM
+   machine you should get the numbers in §3, and on x86 the last digits may differ (§22). Now
+   change the network's seed (`new Network(seed: 7, …)`) and print again. You'll get a completely
+   different, equally valid decomposition. This is the most illuminating exercise here: it shows
+   there's no single "correct" set of learned features.
+8. **Sweep the batch size on the moons.** Try 1, 8, 32, 256, and full batch at a fixed epoch
+   count, and plot test accuracy against *updates* rather than epochs. §20's three regimes, on a
+   dataset large enough for them to be distinguishable.
+9. **Find where overfitting starts.** The demo uses 20 training points. Sweep 20, 50, 200, 1000
+   at fixed capacity and watch the train/test gap close. Then hold the data at 20 and shrink the
+   network instead. Two different cures for the same disease.
+10. **Add momentum:** keep a velocity buffer per layer, `v = βv + grad` (β ≈ 0.9), and step along
+    `v`. Compare convergence speed on the moons, where there's enough training time to measure.
+11. **Add cross-entropy loss.** For classification it beats MSE: with a sigmoid output the
+    `σ'(z)` factor cancels against the loss derivative, removing the slowdown that occurs when
+    the network is confidently wrong (where `σ'` ≈ 0 nearly kills the gradient).
+12. **Break the forward cache on purpose.** Make `Forward` cache again (§14) and call
+    `net.Predict(...)` between `AccumulateGradients` and `ApplyGradients`. Nothing throws, loss
+    still falls, and the network trains on the wrong example. Then run `CacheLifetimeTests` and
+    watch them catch it. The best available demonstration of why "it still trains" proves nothing.
+13. **Implement `ForwardBatch` as a real tiled GEMM** (§25 item 1) and benchmark it against the
+    existing null result in [`bench/`](bench/README.md). This is the largest measured win still on
+    the table.
+14. **Re-run the benchmarks on your own machine.** If it's x86, `Vector<float>` is 8 or 16 wide
+    rather than 4. Which conclusions in [`bench/README.md`](bench/README.md) change, and which
+    hold? The ones that hold are the ones worth trusting.
 
 ---
 
@@ -1278,18 +1593,29 @@ Honest limits, ordered by how much they cost:
    about one multiply-add per float loaded. Batching into a *tiled matrix-matrix multiply*
    reuses each loaded weight block across many examples, raising arithmetic intensity by
    roughly the batch size. Tuned BLAS libraries commonly report order-of-magnitude gains from
-   this, though **nothing here has been benchmarked** — exercise 10 is where you'd measure it
-   rather than take my word. Expect it to dominate everything else on this list, including all
-   the SIMD work.
+   this.
+
+   *Half of this is now measured.* `ForwardBatch` benchmarks at **0.98× a manual loop** at batch
+   sizes 1, 32 and 256 — a null result, confirming it buys nothing today
+   ([table](bench/README.md#4-forwardbatch--a-deliberate-null-result)). The 2% is loop overhead
+   the caller no longer pays, not arithmetic. The *other* half — that a real tiled GEMM would
+   dominate every other optimization here — remains unmeasured, because it remains unwritten.
+   That is exercise 10, and it is still the largest single win available.
 2. **Plain SGD.** No momentum, Adam, learning-rate schedule, or weight decay. Adam typically
    converges several times faster.
 3. **MSE only.** Cross-entropy is the right loss for classification (exercise 9).
 4. **Single-threaded.** No `Parallel.For` over units or batch rows.
 5. **No explicit FMA.** `acc += a * b` may or may not fuse into one instruction;
    `Vector256.FusedMultiplyAdd` guarantees it, at the cost of writing a separate ARM path.
-6. **No regularization, validation split, or early stopping** — so nothing detects overfitting.
+6. **No regularization or early stopping, and no automatic validation split.** `Train` will
+   happily overfit and report a falling loss the whole way — §22 shows it doing exactly that.
+   The demo splits train/test *by hand*, which is the minimum viable version; nothing in the
+   library computes a validation score, watches it, or stops when it turns.
 7. **Serialization saves parameters only** — not optimizer state (there is none yet) or training
    history. Fine for inference; you cannot resume training mid-run from a file.
+8. **Single-example forward and backward.** Both walk one example at a time, so the API cannot
+   express a batched backward pass even if item 1 were implemented. `ForwardBatch` is inference-
+   only for this reason.
 
 For production, the fastest C# is C# that calls something else: `TensorPrimitives`, ONNX
 Runtime, or a GPU. Nobody beats a tuned BLAS with hand-written loops. This code exists for

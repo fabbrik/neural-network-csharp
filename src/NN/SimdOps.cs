@@ -14,6 +14,8 @@ internal static class SimdOps
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static float Dot(ReadOnlySpan<float> a, ReadOnlySpan<float> b)
     {
+        if (a.Length != b.Length) throw new ArgumentException($"Span lengths must match: {a.Length} != {b.Length}.", nameof(b));
+
         int width = Vector<float>.Count;
         int n = a.Length;
         int i = 0;
@@ -46,6 +48,8 @@ internal static class SimdOps
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void AddScaled(Span<float> dest, ReadOnlySpan<float> src, float scale)
     {
+        if (dest.Length != src.Length) throw new ArgumentException($"Span lengths must match: {dest.Length} != {src.Length}.", nameof(src));
+
         int width = Vector<float>.Count;
         int n = dest.Length;
         int i = 0;

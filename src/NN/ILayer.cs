@@ -3,6 +3,10 @@ namespace NN;
 /// <summary>
 /// Non-generic view of a layer, so a network can hold a heterogeneous stack
 /// (<c>Dense&lt;ReLU&gt;</c> then <c>Dense&lt;Sigmoid&gt;</c>) in one list.
+///
+/// <para><b>Not thread-safe.</b> A layer owns mutable buffers — gradient accumulators and the
+/// backward pass's activation cache — so one instance cannot be used from two threads at once.
+/// Give each thread its own network, or serialize access.</para>
 /// </summary>
 public interface ILayer
 {
@@ -12,17 +16,38 @@ public interface ILayer
     /// <summary>Total trainable parameters (weights + biases). Used by <c>Network.Summary</c>.</summary>
     int ParameterCount { get; }
 
-    /// <summary>Computes activations for one example and caches what the backward pass needs.</summary>
+    /// <summary>
+    /// Computes activations for one example. <b>Inference only</b>: it caches nothing, so it is
+    /// safe to call at any time — including between <see cref="ForwardTrain"/> and
+    /// <see cref="Backward"/> — without disturbing a pending backward pass.
+    /// </summary>
     void Forward(ReadOnlySpan<float> aIn, Span<float> aOut);
 
     /// <summary>
-    /// Propagates the gradient one layer back.
+    /// Computes activations for one example <i>and</i> caches the inputs and outputs that the
+    /// following <see cref="Backward"/> needs.
+    ///
+    /// <para>Split from <see cref="Forward"/> deliberately. When a single method both computed
+    /// and cached, any incidental forward pass — evaluating a loss, checking a prediction
+    /// mid-training — silently overwrote the cache and made the next <see cref="Backward"/>
+    /// compute gradients for the wrong example, with no error. Now only the training path
+    /// writes the cache, so that hazard cannot arise.</para>
+    /// </summary>
+    void ForwardTrain(ReadOnlySpan<float> aIn, Span<float> aOut);
+
+    /// <summary>
+    /// Propagates the gradient one layer back, using the example cached by the most recent
+    /// <see cref="ForwardTrain"/> and consuming that cache.
     /// </summary>
     /// <param name="gradOut">dL/da for this layer's outputs, length <see cref="Units"/>.</param>
     /// <param name="gradIn">
     /// Receives dL/dx for this layer's inputs, length <see cref="Inputs"/>. Pass an empty span
     /// for the first layer — nothing downstream consumes it, so computing it is wasted work.
     /// </param>
+    /// <exception cref="InvalidOperationException">
+    /// No <see cref="ForwardTrain"/> has run since the last <see cref="Backward"/>. Backprop
+    /// needs that example's activations; without them there is nothing to differentiate.
+    /// </exception>
     void Backward(ReadOnlySpan<float> gradOut, Span<float> gradIn);
 
     /// <summary>Applies the accumulated gradients and clears them.</summary>

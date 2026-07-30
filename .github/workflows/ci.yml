@@ -20,9 +20,9 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
-          dotnet-version: '9.0.x'
+          dotnet-version: '10.0.x'
 
       - name: Restore
         run: dotnet restore
@@ -35,3 +35,8 @@ jobs:
 
       - name: Run the demo
         run: dotnet run --no-build --configuration Release --project src/NN.Demo
+
+      # Built, not run. Benchmark timings from shared cloud runners are noise, but an
+      # unbuilt benchmark project silently rots against the library it measures.
+      - name: Build the benchmarks
+        run: dotnet build --no-restore --configuration Release bench/NN.Bench
