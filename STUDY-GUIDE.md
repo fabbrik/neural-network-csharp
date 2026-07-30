@@ -1,5 +1,7 @@
 # Neural Networks from Scratch in C# — Study Guide
 
+***English** · [Español](STUDY-GUIDE.es.md)*
+
 A complete, working neural network with backpropagation, written in C# with SIMD — and an
 explanation of **why every piece exists**, starting from zero assumed knowledge.
 

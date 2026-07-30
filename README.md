@@ -1,5 +1,7 @@
 # Neural Network from Scratch in C#
 
+***English** · [Español](README.es.md)*
+
 A feed-forward neural network built from first principles in C# — no ML libraries, no
 frameworks, just arrays and calculus. Backpropagation, SIMD-accelerated math, model
 serialization, a verified gradient check, and benchmarks for every performance claim it makes.
