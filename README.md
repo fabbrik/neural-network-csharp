@@ -143,6 +143,32 @@ Confusion matrix — rows are the true digit, columns the prediction:
 It then prints the digits it got **wrong**, which is the more honest picture of "97%" than the
 number is — most are ambiguous enough that a person would hesitate too.
 
+**The trained model is saved, so you only pay for training once.** Re-running loads 397 KB of
+weights instead of retraining: **37 s → 4 ms**, same 97.41%.
+
+```bash
+dotnet run -c Release --project src/NN.Mnist                  # reuse the saved model
+dotnet run -c Release --project src/NN.Mnist -- --predict 42  # classify one image
+dotnet run -c Release --project src/NN.Mnist -- --retrain     # train from scratch
+```
+
+`--predict` shows all ten outputs, so you can see what it nearly said:
+
+```
+  This is a 4. The network says 4 — correct.
+
+    3  0.001
+    4  0.974  ██████████████████████████████████████
+    7  0.005
+    9  0.017
+```
+
+That runner-up is the 4/9 confusion from the matrix above, visible in a single prediction.
+
+After saving, the demo reloads the file and checks that 1,000 predictions come back **bit-for-bit
+identical** — a serializer that drops or reorders parameters yields a model that still loads,
+still predicts, and is merely *worse*, which is the same silent-failure class as a wrong gradient.
+
 The dataset is not in this repository. The demo downloads it once (~11 MB) and caches it outside
 the working tree; every later run, including offline ones, reads the cache. With no network and no
 cache it explains that and exits cleanly rather than failing — so `dotnet test` and the other demo
@@ -164,7 +190,7 @@ number to beat.
 | **Training** | Backpropagation, mini-batch SGD, MSE loss, shuffling |
 | **Initialization** | Xavier/Glorot uniform |
 | **Model API** | Keras-style `Sequential` builder, `Summary()` |
-| **Persistence** | Versioned binary format with architecture + weights |
+| **Persistence** | Versioned binary format with architecture + weights; train once, reload in ms |
 | **Verification** | Finite-difference gradient checking |
 | **Data** | Generated two-moons dataset; MNIST loader (IDX format, download + cache) |
 

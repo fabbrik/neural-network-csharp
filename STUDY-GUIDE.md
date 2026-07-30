@@ -1567,6 +1567,50 @@ for this architecture; the ~98% usually quoted needs cross-entropy and a better 
 items 2 and 3 are no longer caveats in a list — they are a 0.6-point gap and a chunk of those 37
 seconds, and exercises 10 and 11 are where you close them.
 
+### And this is where saving a model finally means something
+
+The demo writes the trained network to disk and reuses it:
+
+```
+  Saved to ~/.../nn-mnist/mnist-128.nnm
+    397 KB for 101,770 parameters (4.0 bytes each — float32 plus a header)
+    Reloaded and verified: all 1,000 sampled predictions are bit-for-bit identical.
+
+  (next run)
+  Loaded a trained model — no training needed.
+    397 KB, 101,770 parameters, loaded in 4 ms
+```
+
+**37 seconds becomes 4 milliseconds, at identical accuracy.** §19 explained the file format on a
+model with 17 parameters, where persistence is a curiosity. Here it is the difference between a
+demo you run once and a demo you can actually use — and it is the normal shape of deployed machine
+learning, where training happens rarely on expensive hardware and inference happens constantly
+somewhere else. The 397 KB is the entire deliverable; the 60,000 training images are not needed to
+classify anything.
+
+Three details are worth pulling out.
+
+**The architecture comes back out of the file.** Nothing in the loading path is told it is reading
+a 784-128-10 network — `ModelIO` stored each layer's type and shape next to its weights, so
+`Load` reconstructs the stack and `Summary()` prints it. That is why §19 argued against a bare
+weight dump.
+
+**The reload is verified, not assumed.** After saving, the demo reloads and compares 1,000
+predictions bit-for-bit. This matters more at 101,770 parameters than at 17: with seventeen, a
+mis-serialized weight almost certainly breaks a prediction visibly, while with a hundred thousand
+a single misplaced value shifts accuracy by a fraction of a percent and reads as noise. Exact
+equality is the only comparison that catches it, and `ModelScaleTests` pins the same property.
+
+**The filename carries what the format doesn't.** The model file records the architecture but has
+no idea *how much data it saw*. A model trained on 5,000 images reloads perfectly happily
+alongside one trained on 60,000, so the demo puts both the hidden width and any training-set limit
+in the filename. Neither mismatch would be an error — both would be silently wrong results, which
+is the harder kind to notice.
+
+> This is also §25 item 7 in practice: only parameters are saved, not optimizer state or training
+> history. Fine here, because inference is all that's wanted. You could not resume an interrupted
+> training run from this file.
+
 > The dataset is not in the repository. The demo downloads it once (~11 MB) and caches it outside
 > the working tree; later runs, including offline ones, read the cache. With neither network nor
 > cache it says so and exits cleanly — a teaching repo should not fail because a mirror is down.

@@ -16,11 +16,14 @@ int trainLimit = ArgValue("--train", 0);   // 0 = all 60,000
 int predictIndex = ArgValue("--predict", -1);
 bool retrain = HasFlag("--retrain");
 
-// The architecture is in the filename, so asking for --hidden 256 cannot silently load a model
-// trained with 128 units. ModelIO stores the architecture too and would happily reload the old
-// shape; the mismatch would be invisible rather than wrong, which is worse.
-string modelPath = ArgPath("--model")
-    ?? Path.Combine(MnistData.CacheDirectory, $"mnist-{hidden}.nnm");
+// Both the architecture and the training-set size go in the filename, because a saved model is
+// only interchangeable with one trained the same way. ModelIO records the architecture and would
+// reload a 256-unit model perfectly happily — and a model trained on 5000 images would reload
+// with no complaint at all, since nothing about the file says how much data it saw. Neither
+// mismatch is an error; both are silently *wrong results*, which is harder to notice.
+string modelPath = ArgPath("--model") ?? Path.Combine(
+    MnistData.CacheDirectory,
+    trainLimit > 0 ? $"mnist-{hidden}-{trainLimit}.nnm" : $"mnist-{hidden}.nnm");
 
 Console.WriteLine("Handwritten digit recognition — MNIST\n");
 
