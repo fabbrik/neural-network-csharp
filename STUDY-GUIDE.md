@@ -703,11 +703,11 @@ activation; the only difference is memory order ([details](bench/README.md#2-wei
 
 | Layer shape | Unit-major (contiguous) | Feature-major (strided) | Cost of striding |
 |---|---|---|---|
-| **2 × 4** — the XOR layer | 16.0 ns | 13.9 ns | **0.87× — striding *wins*** |
-| 64 × 64 | 727 ns | 3306 ns | **4.6×** |
-| 784 × 128 — MNIST-sized | 12.8 µs | 75.9 µs | **5.9×** |
+| **2 × 4** — the XOR layer | 19.1 ns | 16.0 ns | **0.84× — striding *wins*** |
+| 64 × 64 | 525 ns | 3249 ns | **6.2×** |
+| 784 × 128 — MNIST-sized | 9.75 µs | 72.6 µs | **7.4×** |
 
-At realistic sizes the claim holds comfortably: 4.6–5.9×, the largest single effect in the
+At realistic sizes the claim holds comfortably: 6.2–7.4×, the largest single effect in the
 codebase, and larger than the SIMD win it partly enables.
 
 **But look at the first row.** On the XOR layer the "bad" layout is *faster*. Eight weights are 32
@@ -780,15 +780,25 @@ descent needs a slope to follow; a staircase has none.
 [`Dense.Forward`](src/NN/Dense.cs):
 
 ```csharp
-for (int j = 0; j < Units; j++)
-{
-    float z = SimdOps.Dot(w.Slice(j * Inputs, Inputs), aIn) + Bias[j];
-    aOut[j] = TActivation.Apply(z);
-}
+SimdOps.MatVec(Weights, aIn, Bias, aOut);   // dest[j] = dot(weights_j, x) + bias[j]
+TActivation.ApplyAll(aOut);                 // then activate the whole vector at once
 ```
 
-Line for line, this is §2: slice the unit's weights, dot with the input, add bias, activate.
+and `MatVec` is §2 line for line — slice the unit's weights, dot with the input, add bias:
+
+```csharp
+for (int j = 0; j < dest.Length; j++)
+    dest[j] = Dot(weights.Slice(j * n, n), x) + bias[j];
+```
+
 Compare it to the original NumPy and the correspondence is exact — only the layout changed.
+
+**Why the activation is a second pass rather than the last line of that loop.** `exp` and `tanh`
+cost tens of cycles each, and a layer calls one per unit; applied to the output vector as a whole
+they are four at a time. That is worth 2× on the activation step and ~1.3× on the layer
+([§25](#25-what-is-not-here), [benchmarks](bench/README.md#6-activating-a-layer-at-a-time-instead-of-a-unit-at-a-time)).
+The `NoInlining` on `MatVec` is not decoration either — without it this exact code runs **6× slower**,
+for reasons the benchmark README documents in detail.
 
 ### The two forward passes, and the bug that split them
 
@@ -898,15 +908,15 @@ benchmarked against a scalar loop and against a single-accumulator SIMD version
 
 | Length | Scalar | 1 accumulator | 2 accumulators | SIMD win | 2nd accumulator win |
 |---|---|---|---|---|---|
-| 8 | 4.25 ns | 1.27 ns | 1.54 ns | 2.8× | **0.83× — worse** |
-| 64 | 37.9 ns | 9.87 ns | 8.02 ns | 4.7× | **1.23×** |
-| 512 | 357 ns | 78.8 ns | 59.3 ns | 6.0× | **1.33×** |
-| 4096 | 2975 ns | 713 ns | 481 ns | 6.2× | **1.48×** |
+| 8 | 4.23 ns | 1.27 ns | 1.03 ns | 4.1× | **1.23×** |
+| 64 | 38.3 ns | 9.92 ns | 7.91 ns | 4.8× | **1.25×** |
+| 512 | 360 ns | 82.4 ns | 63.5 ns | 5.7× | **1.30×** |
+| 4096 | 2937 ns | 723 ns | 500 ns | 5.9× | **1.45×** |
 
 Three things to notice.
 
 **The SIMD win exceeds the vector width.** `Vector<float>` is only 4 wide on the ARM machine these
-numbers come from, yet the speedup reaches 6.2×. Vectorizing doesn't just do 4 multiplies at once
+numbers come from, yet the speedup reaches 5.9×. Vectorizing doesn't just do 4 multiplies at once
 — it also quarters the loop bookkeeping and the bounds checks. Getting *more* than the width is
 normal; the width is a floor, not a ceiling.
 
@@ -914,23 +924,37 @@ normal; the width is a floor, not a ceiling.
 second-largest optimization in the codebase after data layout, which is a lot for one extra
 register.
 
-**And at length 8 it actively costs 17%.** Eight floats is exactly two 4-wide vectors: the
-two-accumulator loop runs its body once and drops straight into the tail, paying all of the setup
-and recovering none of the pipelining. The same size-threshold story as §12, but sharper — here
-the "optimization" doesn't merely stop helping, it starts hurting.
-
-> **A footnote worth more than the table.** Under .NET 9 that first row was a dead heat; on .NET 10
-> the single-accumulator version pulled ahead. Nothing in `SimdOps.cs` changed — the JIT did.
-> **Micro-optimizations are measured against a runtime, not against physics**, and a runtime
-> upgrade can flip the sign of an effect while your source sits still. This is the argument for
-> keeping benchmarks *in the repository* and re-running them, rather than measuring once and
-> writing the number into a comment where it quietly goes stale.
+> **A footnote worth more than the table.** An earlier revision of this guide reported that first
+> row as **0.83× — the second accumulator actively costing 17%** — and spent a paragraph explaining
+> why eight floats is exactly the length at which it should lose. The explanation was plausible and
+> the number was noise: those rows had been measured with BenchmarkDotNet's three-iteration
+> `--job short`, whose error bar was wider than the effect being described. Re-measured properly it
+> wins 1.23×, like every other row.
+>
+> Two lessons, and the second is the expensive one. **A short job is for triage, not conclusions.**
+> And **a confident mechanism is not evidence** — the story about setup costs and tail iterations
+> was convincing enough that nobody re-ran the measurement it was invented to explain.
 
 ### `AddScaled` — `dest += src × scale`
 
 [`SimdOps.AddScaled`](src/NN/SimdOps.cs) is the workhorse of the *backward* pass. Notice from §8
 that steps 3 and 4 are both "add a scaled vector into an accumulator" — the same primitive
 serves weight-gradient accumulation, input-gradient propagation, and the descent step itself.
+
+Unlike `Dot`, this one is *not* hand-rolled: it calls `TensorPrimitives.MultiplyAdd` from
+`System.Numerics.Tensors`, which is **2.5× faster** than the `Vector<float>` loop it replaced. The
+split between the two is worth understanding, because it is not a matter of taste:
+
+| | `Dot` | `AddScaled` |
+|---|---|---|
+| Shape | reduction — one value out | streaming — one value per element |
+| `TensorPrimitives` version | **1.5× slower** at 4096 | **2.5× faster** at 4096 |
+| Why | carries a single accumulator chain through the reduction — the exact serial dependency the second accumulator exists to break | no dependency chain to carry, unrolls freely, and emits a real fused multiply-add |
+
+So the library uses the runtime's kernel for one of its two primitives and its own loop for the
+other. Neither answer was predictable from reading the API; both came from
+[the benchmarks](bench/README.md#5-addscaled--where-tensorprimitives-does-win). **"Use the
+optimized library function" is a hypothesis, not a conclusion.**
 
 ### Why these live outside `Dense<T>`
 

@@ -104,13 +104,12 @@ public sealed class Dense<TActivation> : ILayer where TActivation : IActivation
         if (aIn.Length != Inputs) throw new ArgumentException($"Expected {Inputs} inputs, got {aIn.Length}.", nameof(aIn));
         if (aOut.Length != Units) throw new ArgumentException($"Expected {Units} outputs, got {aOut.Length}.", nameof(aOut));
 
-        ReadOnlySpan<float> w = Weights;
+        // Two passes, not one fused loop: every pre-activation is written first, then the
+        // activation is applied to the whole vector at once. For Sigmoid and Tanh that turns a
+        // per-unit call to exp or tanh into a handful of vector instructions over the layer.
+        SimdOps.MatVec(Weights, aIn, Bias, aOut);
 
-        for (int j = 0; j < Units; j++)
-        {
-            float z = SimdOps.Dot(w.Slice(j * Inputs, Inputs), aIn) + Bias[j];
-            aOut[j] = TActivation.Apply(z);
-        }
+        TActivation.ApplyAll(aOut);
     }
 
     /// <summary>

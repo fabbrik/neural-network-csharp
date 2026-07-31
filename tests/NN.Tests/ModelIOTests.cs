@@ -140,12 +140,14 @@ public class ModelIOTests
     private readonly struct NeverRegistered : IActivation
     {
         public static float Apply(float z) => z * 0.5f;
+        public static void ApplyAll(Span<float> z) => IActivation.Elementwise<NeverRegistered>(z);
         public static float DerivativeFromOutput(float a) => 0.5f;
     }
 
     private readonly struct Registered : IActivation
     {
         public static float Apply(float z) => z * 0.5f;
+        public static void ApplyAll(Span<float> z) => IActivation.Elementwise<Registered>(z);
         public static float DerivativeFromOutput(float a) => 0.5f;
     }
 

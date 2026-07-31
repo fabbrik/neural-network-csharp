@@ -96,6 +96,7 @@ public class GradientTests
     private readonly struct BrokenTanh : IActivation
     {
         public static float Apply(float z) => MathF.Tanh(z);
+        public static void ApplyAll(Span<float> z) => IActivation.Elementwise<BrokenTanh>(z);
         public static float DerivativeFromOutput(float a) => 1f + a * a;
     }
 }

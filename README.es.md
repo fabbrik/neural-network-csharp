@@ -2,18 +2,21 @@
 
 *[English](README.md) · **Español***
 
-Una red neuronal *feed-forward* construida desde cero en C#: sin bibliotecas de machine learning,
-sin frameworks, solo `arrays` y cálculo. Incluye backpropagation, operaciones aceleradas con SIMD,
-serialización de modelos, gradient checking y benchmarks para cada afirmación de rendimiento.
+Una red neuronal *feed-forward* —o de propagación hacia delante— construida desde cero en C#. No
+utiliza bibliotecas de machine learning ni frameworks especializados: solo arreglos y cálculo
+numérico. Incluye propagación hacia atrás (`backpropagation`), operaciones aceleradas con SIMD,
+serialización de modelos, comprobación de gradientes (`gradient check`) y benchmarks que respaldan
+cada afirmación de rendimiento.
 
-Viene acompañada de una [**guía de estudio**](STUDY-GUIDE.es.md) que explica *por qué existe cada
-pieza*: desde «qué es una neurona», pasando por la regla de la cadena, hasta las líneas de caché.
-También incluye dos ejemplos resueltos que puedes seguir con una calculadora.
+El repositorio incluye además una [**guía de estudio**](STUDY-GUIDE.es.md) que explica *por qué
+existe cada pieza*: comienza por qué es una neurona, desarrolla la regla de la cadena y llega hasta
+detalles de bajo nivel como las líneas de caché. También contiene dos ejemplos resueltos que puedes
+seguir con una calculadora.
 
 > **Convención de términos.** Esta versión evita traducciones literales que casi nadie usa en
-> código, papers o cursos. Por eso deja en inglés términos como `forward pass`, `mini-batch`,
-> `learning rate`, `benchmark`, `dataset`, `overfitting`, `logits` y `gradient check`, explicándolos
-> en español cuando hace falta.
+> código, artículos académicos, documentación técnica o cursos. Por eso deja en inglés términos como
+> `forward pass`, `mini-batch`, `learning rate`, `benchmark`, `dataset`, `overfitting`, `logits` y
+> `gradient check`, explicándolos en español cuando hace falta.
 
 ```csharp
 var net = new Sequential(inputs: 2)
@@ -29,21 +32,22 @@ ModelIO.Save(net, "xor.nnm");
 var loaded = ModelIO.Load("xor.nnm");          // predice de forma idéntica
 ```
 
-## ¿Por qué otro repositorio de estos?
+## ¿Qué aporta este repositorio?
 
 Hay muchos repositorios de «red neuronal desde cero». Este intenta aportar tres cosas menos comunes:
 
-**Verifica su propio backward pass.** Una implementación sutilmente incorrecta de backpropagation
-puede seguir entrenando *hasta cierto punto*, lo que hace que estos errores sean difíciles de
-encontrar.
-[`GradientCheck`](src/NN/GradientCheck.cs) compara cada gradiente analítico contra una estimación
-por diferencias finitas centradas. La suite de tests comprueba la curva en U del error numérico que
-esperas de un gradiente implementado correctamente, e incluye una derivada incorrecta a propósito
-para demostrar que el check puede fallar.
+**Verifica su propio `backward pass`.** Una implementación de `backpropagation` con errores sutiles
+puede continuar reduciendo la pérdida y parecer funcional durante un tiempo, lo que hace que estos
+errores sean difíciles de encontrar. [`GradientCheck`](src/NN/GradientCheck.cs) compara cada
+gradiente analítico con una estimación por diferencias finitas centradas. La batería de pruebas
+comprueba la curva en U del error numérico que cabe esperar de un gradiente implementado
+correctamente, e incluye una derivada incorrecta a propósito para demostrar que el `gradient check`
+detecta efectivamente una derivada errónea.
 
-**Mide sus propias afirmaciones, y reporta la que resultó errónea.** Cada afirmación de rendimiento
-en esta documentación tiene un [benchmark](bench/) detrás. Una de ellas — que una activación llamada
-mediante un delegado sería significativamente más lenta que una genérica — resultó ser **falsa**, y
+**Mide sus propias afirmaciones y reporta la que resultó errónea.** Cada afirmación de rendimiento
+de esta documentación tiene un [benchmark](bench/) detrás. Una de ellas —que una función de
+activación implementada mediante un delegado sería significativamente más lenta que una genérica—
+resultó ser **falsa**, y
 [el informe lo dice](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong)
 en lugar de descartarla en silencio.
 
@@ -67,9 +71,9 @@ dotnet run -c Release --project bench/NN.Bench -- --filter '*'   # benchmarks
 > aquí sería describir un programa que no existe. El código, los nombres de identificadores y las
 > banderas de línea de comandos se mantienen igual por la misma razón.
 
-La demo ejecuta seis secciones. Las primeras cuatro están a escala XOR: el perceptrón converge en
-AND, una capa oculta resuelve XOR, un modelo se guarda y se carga de nuevo, y se ejecuta un
-gradient check:
+La aplicación de demostración ejecuta seis secciones. Las primeras cuatro utilizan ejemplos pequeños
+basados en XOR: el perceptrón converge en AND, una capa oculta resuelve XOR, un modelo se guarda y
+se carga de nuevo, y se ejecuta un `gradient check`:
 
 ```
 Perceptron on AND: converged in 4 epochs
@@ -85,8 +89,9 @@ Saved to xor.nnm (127 bytes), reloaded:
 Gradient check: max relative error = 3.521E-004
 ```
 
-Las dos últimas usan un dataset lo bastante grande como para mostrar lo que XOR no puede mostrar:
-mini-batches, generalización a datos no vistos y overfitting:
+Las dos últimas usan el conjunto de datos (`dataset`) *two moons* («dos lunas»), lo bastante grande
+como para mostrar lo que XOR no puede mostrar: `mini-batches`, generalización a datos no vistos y
+`overfitting`:
 
 ```
 Two moons: 1500 noisy points, 1000 train / 500 test
@@ -124,9 +129,9 @@ Overfitting: same problem, 20 training points, a much larger network
 
 ## Leer dígitos manuscritos
 
-Una demo aparte entrena con [MNIST](src/NN.Mnist/): 60 000 dígitos manuscritos, 784 entradas y
-101 770 parámetros. Con dos capas densas, backpropagation y una salida softmax consigue **98,0 %
-en dígitos que nunca vio, en 37 segundos**:
+Una demostración aparte entrena con [MNIST](src/NN.Mnist/): 60 000 dígitos manuscritos, 784 entradas
+y 101 770 parámetros. Con dos capas densas, `backpropagation` y una salida `softmax` consigue
+**98,0 % en dígitos que nunca vio, en 37 segundos**:
 
 ```
 A training example (label 5):
@@ -160,8 +165,8 @@ Después imprime los dígitos en los que se **equivocó**. Eso da una imagen má
 que el número por sí solo: la mayoría son lo bastante ambiguos como para que una persona también
 dudara.
 
-**El modelo entrenado se guarda, así que solo pagas el entrenamiento una vez.** Al volver a
-ejecutar la demo, carga 397 KB de pesos en lugar de reentrenar: **37 s → 4 ms**, con el mismo
+**El modelo entrenado se guarda, así que solo necesitas entrenarlo una vez.** Al volver a ejecutar
+la demostración, carga 397 KB de pesos en lugar de reentrenar: **37 s → 4 ms**, con el mismo
 98,02 %.
 
 ```bash
@@ -171,7 +176,8 @@ dotnet run -c Release --project src/NN.Mnist -- --image d.png    # clasifica tu 
 dotnet run -c Release --project src/NN.Mnist -- --retrain        # entrena desde cero
 ```
 
-`--predict` muestra las diez salidas, para que veas lo que estuvo a punto de decir:
+`--predict` muestra las diez salidas, para que puedas ver qué otras clases recibieron
+probabilidades significativas:
 
 ```
   This is a 4. The network says 4 — correct.
@@ -180,22 +186,22 @@ dotnet run -c Release --project src/NN.Mnist -- --retrain        # entrena desde
     9  0.001
 ```
 
-Después de guardar, la demo recarga el archivo y comprueba que 1000 predicciones salen
+Después de guardar, la demostración recarga el archivo y comprueba que 1000 predicciones salen
 **idénticas bit a bit**. Un serializador que pierde o reordena parámetros puede producir un modelo
-que todavía carga y todavía predice, pero que simplemente es *peor*: la misma clase de fallo
+que se carga y produce predicciones, pero cuyo rendimiento se ha degradado: la misma clase de fallo
 silencioso que un gradiente incorrecto.
 
-El dataset no está en este repositorio. La demo lo descarga una vez (~11 MB) y lo guarda
-en caché fuera del árbol de trabajo; toda ejecución posterior, incluidas las que no tienen
-conexión, lee esa caché. Si no hay red ni caché, lo explica y termina limpiamente en lugar de
-fallar. Así `dotnet test` y la otra demo nunca dependen de que un mirror del dataset esté
-disponible.
+El `dataset` no está en este repositorio. La demostración lo descarga una vez (~11 MB) y lo guarda
+en caché fuera del árbol de trabajo; toda ejecución posterior, incluidas las que no tienen conexión,
+lee esa caché. Si no hay red ni caché, muestra un mensaje explicativo y finaliza de forma
+controlada. Así `dotnet test` y la otra demostración nunca dependen de que un servidor réplica del
+`dataset` esté disponible.
 
 ### Leer un dígito desde un archivo de imagen
 
 El repositorio sí incluye un reconocedor ya entrenado:
 [`models/mnist-784-128-10.nnm`](models/). Por eso `--image` funciona en un clon recién hecho, sin
-entrenar nada y sin descargar el dataset:
+entrenar nada y sin descargar el `dataset`:
 
 ```
 Image:  my-digit.png
@@ -209,30 +215,30 @@ Image:  my-digit.png
   This is a 0.  (confidence 0.999)
 ```
 
-PNG y Netpbm se decodifican en [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) sin dependencias fuera
-del framework. La mayor parte de ese archivo no es descompresión (`ZLibStream` se encarga de eso),
-sino la reversión de los filtros por fila que usa PNG.
+PNG y Netpbm se decodifican en [`ImageFile.cs`](src/NN.Mnist/ImageFile.cs) sin dependencias externas
+al framework de .NET. La mayor parte de ese archivo no es descompresión —de eso se encarga
+`ZLibStream`—, sino la reversión de los filtros por fila que usa PNG.
 
 **El decodificador es la parte fácil.** La parte importante es
 [`DigitPreprocessor`](src/NN.Mnist/DigitPreprocessor.cs), porque la red no aprendió «dígitos» en
 abstracto: aprendió las convenciones de MNIST. Eso significa tinta blanca sobre fondo negro,
-escalado dentro de una caja de 20×20 y centrado en 28×28 *por centro de masa*. Si rompes cualquiera
-de esas convenciones, la precisión se desploma de una forma que parece un modelo roto. Esas cien
-líneas valen tanto como los 101 770 parámetros entrenados, y la guía de estudio explica en detalle
-por qué.
+escalado dentro de una caja de 20×20 y centrado en 28×28 *por centro de masa*. Si la imagen no
+respeta alguna de esas convenciones, la precisión se desploma de una forma que parece un modelo
+roto. Esas cien líneas valen tanto como los 101 770 parámetros entrenados, y la guía de estudio
+explica en detalle por qué.
 
 Esto se verificó de extremo a extremo exportando dígitos de prueba de MNIST como PNG de 248×248,
-oscuro sobre claro y con márgenes amplios, rompiendo las tres convenciones. Al leerlos de vuelta,
-**10 de 10 coincidieron con lo que el modelo predice sobre los datos crudos**, incluido uno en el
-que se *equivoca*. Reproducir fielmente los errores del modelo demuestra que el preprocesamiento es
-transparente y no está ayudando por accidente.
+oscuro sobre claro y con márgenes amplios, incumpliendo así las tres convenciones. Al leerlos de
+vuelta, **10 de 10 coincidieron con lo que el modelo predice sobre los datos crudos**, incluido uno
+en el que se *equivoca*. Reproducir fielmente los errores del modelo demuestra que el
+preprocesamiento es transparente y no está ayudando por accidente.
 
-### Softmax, cross-entropy y cuánto valen
+### Softmax y cross-entropy: impacto en el entrenamiento
 
-La demo clasifica con una **salida softmax y pérdida cross-entropy**: la configuración estándar
-cuando debes elegir una sola clase entre varias mutuamente excluyentes. Esa es una de las razones
-por las que llega al 98 %. La versión anterior, con diez sigmoides independientes evaluadas con
-MSE, sigue disponible para comparar:
+La demostración clasifica con una **salida `softmax` y pérdida `cross-entropy`**: la configuración
+estándar cuando debes elegir una sola clase entre varias mutuamente excluyentes. Esa es una de las
+razones por las que llega al 98 %. La versión anterior, con diez salidas sigmoidales independientes
+evaluadas mediante MSE, sigue disponible para comparar:
 
 ```bash
 dotnet run -c Release --project src/NN.Mnist -- --loss mse --retrain
@@ -240,7 +246,7 @@ dotnet run -c Release --project src/NN.Mnist -- --loss mse --retrain
 
 | | Precisión en test | Learning rate necesario |
 |---|---|---|
-| MSE sobre diez sigmoides | 97,41 % | **1,0** |
+| MSE sobre diez salidas sigmoidales | 97,41 % | **1,0** |
 | Softmax + cross-entropy | **98,02 %** | **0,1** |
 
 Misma arquitectura, mismas 20 épocas, misma semilla. Con el mismo `learning rate` de 0,1, la
@@ -249,16 +255,19 @@ función de pérdida ya redujo demasiado.
 
 **Por qué.** MSE sobre sigmoides trata los dígitos como diez preguntas de sí/no sin relación entre
 sí, y su gradiente arrastra un factor `σ'(z) = a(1−a)` que se desploma hacia cero justo cuando la
-red está equivocada con confianza — precisamente cuando más necesita aprender. Softmax hace que las
-diez salidas *compitan* (suman 1), y cross-entropy solo puntúa la probabilidad asignada a la clase
-correcta. Derivadas por separado, softmax produce un Jacobiano completo y cross-entropy introduce
-un término `1/p`; **compuestas, casi todo se cancela y el gradiente queda simplemente como `p − y`**
-— predicción menos objetivo, sin factores que se desvanezcan ni cálculos que se desborden.
+red produce una predicción incorrecta con alta confianza —precisamente cuando más necesita
+aprender—. `Softmax` hace que las diez salidas *compitan* (suman 1), y `cross-entropy` solo puntúa
+la probabilidad asignada a la clase correcta.
 
-Esa cancelación solo es válida sobre logits crudos, así que `SoftmaxOutput()` construye una capa
+Derivadas por separado, `softmax` produce un Jacobiano completo y `cross-entropy` introduce un
+término `1/p`; **compuestas, casi todo se cancela y el gradiente queda simplemente como `p − y`**:
+la probabilidad predicha menos la etiqueta objetivo, sin factores que se desvanezcan ni cálculos
+que se desborden.
+
+Esa cancelación solo es válida sobre `logits` crudos, así que `SoftmaxOutput()` construye una capa
 lineal `Dense<Identity>`. La pérdida rechaza una capa de salida ya comprimida, en lugar de calcular
 un gradiente silenciosamente incorrecto. El gradiente fusionado se verifica contra diferencias
-finitas en la suite de tests: un atajo algebraico casi correcto es exactamente el tipo de error
+finitas en la batería de pruebas: un atajo algebraico casi correcto es exactamente el tipo de error
 para el que existe [`GradientCheck`](src/NN/GradientCheck.cs).
 
 El margen que queda es el SGD simple, sin momento ni Adam (guía de estudio §25 punto 2, ejercicio
@@ -270,12 +279,12 @@ El margen que queda es el SGD simple, sin momento ni Adam (guía de estudio §25
 |---|---|
 | **Capas** | Densa (totalmente conectada), de cualquier profundidad |
 | **Activaciones** | Sigmoid, Tanh, ReLU, Identity, Step |
-| **Entrenamiento** | Backpropagation, SGD por mini-batches, shuffling |
+| **Entrenamiento** | Backpropagation, SGD por mini-batches, barajado |
 | **Pérdidas** | MSE; softmax + cross-entropy para clasificación |
 | **Inicialización** | Xavier/Glorot uniforme |
 | **API del modelo** | Constructor `Sequential` estilo Keras, `Summary()` |
 | **Persistencia** | Formato binario versionado con arquitectura + pesos; entrena una vez, recarga en ms |
-| **Verificación** | Gradient checking por diferencias finitas |
+| **Verificación** | `Gradient check` por diferencias finitas |
 | **Datos** | Dataset «dos lunas» generado; cargador de MNIST (formato IDX, descarga + caché) |
 | **Imágenes** | Decodificación de PNG y Netpbm, y normalización a las convenciones de MNIST, sin dependencias |
 
@@ -283,50 +292,68 @@ El margen que queda es el SGD simple, sin momento ni Adam (guía de estudio §25
 
 Cada afirmación de esta sección está medida; los números están en [`bench/`](bench/README.md).
 
-**Los pesos se almacenan por unidad en un único arreglo plano.** Los pesos de la unidad `j`
-ocupan `Weights[j * Inputs .. (j+1) * Inputs]` — la transpuesta de la disposición `(n, j)` de
+**Los pesos se almacenan por unidad en un único arreglo plano.** Los pesos de la unidad `j` ocupan
+`Weights[j * Inputs .. (j+1) * Inputs]`, es decir, la transpuesta de la disposición `(n, j)` de
 NumPy. Eso convierte cada producto escalar en un recorrido SIMD contiguo en lugar de un acceso no
-contiguo, y vuelve a ayudar en backpropagation, donde tanto la acumulación del gradiente de los
+contiguo, y vuelve a ayudar en `backpropagation`, donde tanto la acumulación del gradiente de los
 pesos como el gradiente que vuelve hacia la entrada recorren la misma memoria contigua.
-**Medido: 4,6–5,9× en capas de 64×64 y 784×128**: el mayor efecto del código. En la capa XOR de
-2×4 no ayuda, porque sus ocho pesos caben en una sola línea de caché; ahí la versión no contigua es
+**Medido: 6,2–7,4× en capas de 64×64 y 784×128**, el mayor efecto del código. En la capa XOR de 2×4
+no ayuda, porque sus ocho pesos caben en una sola línea de caché; ahí la versión no contigua es
 ligeramente más rápida.
 
 **SIMD se adapta a la CPU.** [`SimdOps`](src/NN/SimdOps.cs) usa `Vector<float>`, que tiene ancho 4
-en ARM NEON y 8 en AVX2. Usa dos acumuladores para mantener ocupado el pipeline de
+en ARM NEON y 8 en AVX2. Usa dos acumuladores para mantener ocupado el `pipeline` de
 multiplicación-suma y una cola escalar para longitudes que no son múltiplo del ancho. **Medido:
-4,7–6,2× frente a un bucle escalar, y el segundo acumulador aporta otro 1,2–1,5×** en cualquier
-longitud mayor que un par de vectores. Por debajo de eso puede costar un poco; el benchmark lo
-muestra en lugar de ocultarlo.
+4,1–5,9× frente a un bucle escalar, y el segundo acumulador aporta otro 1,2–1,5×.**
 
-**Las activaciones son parámetros de tipo genéricos, no delegados.** `Dense<Tanh>` usa miembros de
-interfaz estáticos abstractos de C# 11, así que el JIT puede integrar la activación dentro del
-bucle. Este README antes afirmaba que la alternativa obvia — un campo `Func<float, float>` — sería
-claramente más lenta por hacer una llamada indirecta por unidad. **La medición dice que no: queda
-dentro de ±2 % en tamaños realistas, sin un signo consistente.** La activación se ejecuta una vez
-por *unidad*, mientras que el producto escalar que la alimenta ejecuta `Inputs`
-multiplicaciones-sumas, así que el coste de la llamada queda amortizado. El diseño genérico se
-mantiene por sus méritos reales — composición sin coste con activaciones `readonly struct` y sin
-asignar delegados — pero no por velocidad.
+**Uno de los dos primitivos SIMD es del runtime; el otro no.** `AddScaled` llama a
+`TensorPrimitives.MultiplyAdd` de `System.Numerics.Tensors` y es **2,5× más rápido** por ello.
+`Dot` conserva su propio bucle porque `TensorPrimitives.Dot` midió **1,5× más lento**: arrastra una
+sola cadena de acumulación a través de la reducción, que es la dependencia serie que el segundo
+acumulador existe para romper. Misma biblioteca, respuestas opuestas, decididas
+[midiendo y no por reputación](bench/README.md#why-not-just-call-tensorprimitivesdot).
+
+**La activación se aplica a toda una capa a la vez, no unidad por unidad.** `exp` y `tanh` cuestan
+decenas de ciclos cada uno; vectorizados se calculan de cuatro en cuatro. **Medido: 2× en el paso de
+activación, 1,3× en la capa.** Conseguirlo requirió un
+`[MethodImpl(MethodImplOptions.NoInlining)]`, sin el cual el mismo código es **6× más lento**: el
+JIT deja de eliminar las comprobaciones de límites en cuanto el bucle se inserta en línea dentro de
+un método genérico grande. Esa historia
+[merece leerse](bench/README.md#the-6-regression-this-change-caused-and-the-one-word-fix): una
+optimización local hizo seis veces más lento justo aquello que optimizaba, y solo el benchmark lo
+detectó.
+
+**Las activaciones se representan mediante parámetros de tipo genérico, no mediante delegados.**
+`Dense<Tanh>` usa miembros de interfaz estáticos abstractos de C# 11, así que el JIT puede realizar
+la inserción en línea (*inlining*) de la función de activación dentro del bucle. Este README antes
+afirmaba que la alternativa obvia —un campo `Func<float, float>`— sería claramente más lenta por
+hacer una llamada indirecta por unidad. **La medición dice que no: queda dentro de ±4 % en tamaños
+realistas, sin un signo consistente.**
+
+La activación se ejecuta una vez por *unidad*, mientras que el producto escalar que la alimenta
+ejecuta `Inputs` multiplicaciones-sumas, así que el coste de la llamada queda amortizado. El diseño
+genérico se mantiene por sus méritos reales —composición sin coste con activaciones
+`readonly struct` y sin asignar delegados—, pero no por velocidad.
 
 **El `forward pass` de inferencia y el de entrenamiento son métodos separados.** `Forward` calcula
-activaciones; `ForwardTrain` además guarda en caché lo que backpropagation necesita. Cuando un solo
-método hacía ambas cosas, cualquier forward pass incidental — evaluar una pérdida, registrar una
-predicción a mitad de época — sobrescribía la caché en silencio. El siguiente `Backward` entonces
-calculaba gradientes para el ejemplo equivocado sin dar error. Separar los métodos hace que ese
-estado inválido no se pueda representar, y `Backward` lanza una excepción si no lo precedió un
+activaciones; `ForwardTrain` además guarda en caché lo que `backpropagation` necesita. Cuando un
+solo método hacía ambas cosas, cualquier `forward pass` incidental —evaluar una pérdida, registrar
+una predicción a mitad de época— sobrescribía la caché en silencio. El siguiente `Backward`
+calculaba entonces gradientes para el ejemplo equivocado sin dar error. Separar los métodos hace que
+ese estado inválido no se pueda representar, y `Backward` lanza una excepción si no lo precedió un
 `ForwardTrain`.
 
 ## Hilos y propiedad de buffers
 
-La biblioteca es **single-threaded por diseño y presta sus buffers**. Dos reglas:
+La biblioteca **está diseñada para ejecutarse en un solo hilo y reutiliza buffers internos**. De ahí
+salen dos reglas:
 
 - **Una red por hilo.** `Network` y `Dense` mantienen buffers de activación mutables, acumuladores
   de gradiente y el estado del barajado. Nada está sincronizado. (`Dense.Forward` sobre una capa
   independiente no toca estado de instancia; `Network.Predict` sí escribe buffers de activación
   compartidos.)
-- **`Predict` devuelve una vista que la siguiente llamada sobrescribe.** Cópiala con `.ToArray()`
-  si necesitas conservarla, y nunca retengas dos resultados de predicción a la vez.
+- **`Predict` devuelve una vista de un buffer que la siguiente llamada sobrescribe.** Si necesitas
+  conservar el resultado, o varias predicciones simultáneamente, copia cada uno con `.ToArray()`.
 
 `ModelIO.Register` modifica una tabla global del proceso. El acceso a esa tabla está sincronizado,
 pero sigue siendo más claro registrar tipos de capa personalizados durante el arranque, no mientras
@@ -349,7 +376,8 @@ STUDY-GUIDE.es.md la explicación extensa (español)
 SDK de .NET 10. [`global.json`](global.json) fija la versión mayor, de modo que una máquina con
 varios SDK instalados compile este repositorio con aquel contra el que fue probado.
 
-La biblioteca no tiene dependencias más allá del framework; el proyecto de pruebas usa xUnit y los
+La biblioteca depende de un único paquete, `System.Numerics.Tensors`, que aporta los `kernels`
+vectorizados de `AddScaled` descritos en las notas de diseño. El proyecto de pruebas usa xUnit y los
 benchmarks usan BenchmarkDotNet.
 
 ## Licencia

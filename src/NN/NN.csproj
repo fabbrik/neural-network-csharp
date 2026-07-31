@@ -10,6 +10,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- TensorPrimitives: hand-tuned, FMA-using, Vector512-aware kernels for the handful of
+         primitives this library needs. Strictly better than the hand-rolled Vector<T> loops it
+         replaced — see bench/README.md for the measured difference. -->
+    <PackageReference Include="System.Numerics.Tensors" Version="10.0.10" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- SimdOps is internal, but the benchmarks need to time it directly against a scalar
          reference. Exposing it publicly just to measure it would be worse. -->
     <InternalsVisibleTo Include="NN.Bench" />

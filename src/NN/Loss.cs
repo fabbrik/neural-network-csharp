@@ -164,6 +164,14 @@ public sealed class SoftmaxCrossEntropy : ILoss
     /// largest logit first fixes it exactly, because softmax is shift-invariant — the same
     /// constant appears in every numerator and in the denominator, and cancels. After the shift
     /// the largest exponent is <c>exp(0) = 1</c>, so nothing can overflow.</para>
+    ///
+    /// <para>Written out rather than delegated to <c>TensorPrimitives.SoftMax</c>, for two
+    /// measured reasons. That kernel computes <c>exp(z) / Σexp(z)</c> literally, so it needs the
+    /// shift applied first anyway or it overflows on exactly the inputs this method exists to
+    /// survive. And once the shift is a separate vectorized pass, the whole thing is <i>slower</i>
+    /// than this loop at the widths a softmax layer actually has: an output layer is one unit per
+    /// class, and at ten classes the vectorized form measures about 1.4× the cost of this one. It
+    /// only pulls ahead past roughly a hundred classes. See <c>ActivationBenchmarks</c>.</para>
     /// </summary>
     public void Transform(Span<float> outputs)
     {

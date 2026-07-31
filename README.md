@@ -265,21 +265,36 @@ Each of these was measured; the numbers link to [`bench/`](bench/README.md).
 `Weights[j * Inputs .. (j+1) * Inputs]` — the transpose of NumPy's `(n, j)` layout. That makes
 each dot product a contiguous SIMD walk instead of a strided gather, and it pays off again in the
 backward pass, where both the weight-gradient accumulation and the input-gradient propagation
-walk the same contiguous memory. **Measured: 4.6–5.9× on 64×64 and 784×128 layers** — the largest
+walk the same contiguous memory. **Measured: 6.2–7.4× on 64×64 and 784×128 layers** — the largest
 effect in the codebase. It is worth *nothing* on the 2×4 XOR layer, whose eight weights fit inside
 a single cache line; there, the strided version is marginally faster.
 
 **SIMD adapts to the CPU.** [`SimdOps`](src/NN/SimdOps.cs) uses `Vector<float>`, which is 4 wide
 on ARM NEON and 8 on AVX2, with two accumulators to keep the multiply-add pipeline fed and a
-scalar tail for lengths that aren't a multiple of the width. **Measured: 4.7–6.2× over a scalar
-loop, and the second accumulator is worth a further 1.2–1.5×** at any length longer than a couple
-of vectors — below that it costs a little, which the benchmark write-up doesn't hide.
+scalar tail for lengths that aren't a multiple of the width. **Measured: 4.1–5.9× over a scalar
+loop, and the second accumulator is worth a further 1.2–1.5×.**
+
+**One of the two SIMD primitives is the runtime's, the other is not.** `AddScaled` calls
+`TensorPrimitives.MultiplyAdd` from `System.Numerics.Tensors` and is **2.5× faster** for it. `Dot`
+keeps its own loop, because `TensorPrimitives.Dot` measured **1.5× slower** — it carries one
+accumulator chain through the reduction, which is the serial dependency the second accumulator
+exists to break. Same library, opposite answers, decided by
+[measurement rather than reputation](bench/README.md#why-not-just-call-tensorprimitivesdot).
+
+**The activation is applied to a whole layer at once, not per unit.** `exp` and `tanh` cost tens
+of cycles each; vectorized they are four at a time. **Measured: 2× on the activation step, 1.3× on
+the layer.** Getting there required one `[MethodImpl(MethodImplOptions.NoInlining)]`, without which
+the same code is **6× slower** — the JIT stops eliminating bounds checks once the loop is inlined
+into a large generic method. That story is
+[worth reading](bench/README.md#the-6-regression-this-change-caused-and-the-one-word-fix) if you
+take anything from this repo: a local optimization made the thing it optimized six times slower,
+and only the benchmark noticed.
 
 **Activations are generic type parameters, not delegates.** `Dense<Tanh>` uses C# 11 static
 abstract interface members, so the JIT inlines the activation into the loop. This README used to
 claim that the obvious alternative — a `Func<float, float>` field — would cost an un-inlinable
 indirect call per unit and therefore be slower. **It is un-inlinable, and it is not slower:
-measured within ±2% at any realistic size, with the sign not even consistent.** The activation
+measured within ±4% at any realistic size, with the sign not even consistent.** The activation
 runs once per *unit* while the
 dot product feeding it runs `Inputs` multiply-adds, so the call is amortized into invisibility.
 The generic design stays, on its real merits — zero-cost composition with `readonly struct`
@@ -320,7 +335,8 @@ STUDY-GUIDE.md    the long-form explanation
 .NET 10 SDK. [`global.json`](global.json) pins the major version, so a machine with several SDKs
 installed builds this repo with the one it was tested against.
 
-The library has no dependencies beyond the framework; the test project uses xUnit and the
+The library takes a single package dependency, `System.Numerics.Tensors`, for the vectorized
+`AddScaled` kernel described in the design notes; the test project uses xUnit and the
 benchmarks use BenchmarkDotNet.
 
 ## License

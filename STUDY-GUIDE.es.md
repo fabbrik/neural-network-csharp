@@ -742,11 +742,11 @@ misma activación; la única diferencia es el orden en memoria
 
 | Forma de la capa | Orden por unidad (contiguo) | Orden por característica (disperso) | Coste de dispersar |
 |---|---|---|---|
-| **2 × 4** — la capa XOR | 16,0 ns | 13,9 ns | **0,87× — ¡gana el disperso!** |
-| 64 × 64 | 727 ns | 3306 ns | **4,6×** |
-| 784 × 128 — tamaño MNIST | 12,8 µs | 75,9 µs | **5,9×** |
+| **2 × 4** — la capa XOR | 19,1 ns | 16,0 ns | **0,84× — ¡gana el disperso!** |
+| 64 × 64 | 525 ns | 3249 ns | **6,2×** |
+| 784 × 128 — tamaño MNIST | 9,75 µs | 72,6 µs | **7,4×** |
 
-A tamaños realistas la afirmación se sostiene con holgura: 4,6–5,9×, el mayor efecto individual del
+A tamaños realistas la afirmación se sostiene con holgura: 6,2–7,4×, el mayor efecto individual del
 código, y mayor que la ganancia de SIMD que en parte habilita.
 
 **Pero mira la primera fila.** En la capa XOR la disposición «mala» es *más rápida*. Ocho pesos son
@@ -949,15 +949,15 @@ Ambas afirmaciones anteriores — que vectorizar compensa, y que el segundo acum
 
 | Longitud | Escalar | 1 acumulador | 2 acumuladores | Ganancia SIMD | Ganancia del 2.º acumulador |
 |---|---|---|---|---|---|
-| 8 | 4,25 ns | 1,27 ns | 1,54 ns | 2,8× | **0,83× — peor** |
-| 64 | 37,9 ns | 9,87 ns | 8,02 ns | 4,7× | **1,23×** |
-| 512 | 357 ns | 78,8 ns | 59,3 ns | 6,0× | **1,33×** |
-| 4096 | 2975 ns | 713 ns | 481 ns | 6,2× | **1,48×** |
+| 8 | 4,23 ns | 1,27 ns | 1,03 ns | 4,1× | **1,23×** |
+| 64 | 38,3 ns | 9,92 ns | 7,91 ns | 4,8× | **1,25×** |
+| 512 | 360 ns | 82,4 ns | 63,5 ns | 5,7× | **1,30×** |
+| 4096 | 2937 ns | 723 ns | 500 ns | 5,9× | **1,45×** |
 
 Tres cosas que notar.
 
 **La ganancia de SIMD supera el ancho del vector.** `Vector<float>` solo tiene ancho 4 en la
-máquina ARM de la que salen estos números, y sin embargo la aceleración llega a 6,2×. Vectorizar no
+máquina ARM de la que salen estos números, y sin embargo la aceleración llega a 5,9×. Vectorizar no
 solo hace 4 multiplicaciones a la vez — también reduce a la cuarta parte la contabilidad del bucle
 y las comprobaciones de límites. Obtener *más* que el ancho es normal; el ancho es un suelo, no un
 techo.
@@ -966,20 +966,27 @@ techo.
 mayor optimización del código tras la disposición de datos, lo cual es mucho para un registro
 extra.
 
-**Y con longitud 8 cuesta activamente un 17 %.** Ocho floats son exactamente dos vectores de ancho
-4: el bucle de dos acumuladores ejecuta su cuerpo una vez y cae directamente en la cola, pagando
-toda la preparación y sin recuperar nada del pipeline. La misma historia de umbral de tamaño
-del §12, pero más aguda — aquí la «optimización» no solo deja de ayudar, empieza a perjudicar.
-
-> **Una nota al pie que vale más que la tabla.** Bajo .NET 9 esa primera fila era un empate técnico;
-> en .NET 10 la versión de un solo acumulador se adelantó. Nada cambió en `SimdOps.cs` — cambió el
-> JIT. **Las microoptimizaciones se miden contra un tiempo de ejecución, no contra la física**, y
-> una actualización del runtime puede invertir el signo de un efecto mientras tu código fuente
-> permanece quieto. Este es el argumento para mantener los benchmarks *dentro del
-> repositorio* y volver a ejecutarlos, en lugar de medir una vez y escribir el número en un comentario donde
-> queda obsoleto en silencio.
+> **Una nota al pie que vale más que la tabla.** Una revisión anterior de esta guía daba esa primera
+> fila como **0,83× — el segundo acumulador costando un 17 %** — y dedicaba un párrafo a explicar por
+> qué ocho floats son exactamente la longitud a la que debería perder. La explicación era plausible
+> y el número era ruido: aquellas filas se habían medido con el `--job short` de BenchmarkDotNet, de
+> tres iteraciones, cuyo margen de error era más ancho que el efecto que se pretendía describir.
+> Bien medida, gana 1,23×, como todas las demás filas.
+>
+> Dos lecciones, y la segunda es la cara. **Un job corto sirve para triaje, no para conclusiones.**
+> Y **un mecanismo convincente no es evidencia**: la historia sobre costes de preparación e
+> iteraciones de cola resultaba tan persuasiva que nadie volvió a ejecutar la medición que se había
+> inventado para explicar.
 
 ### `AddScaled` — `dest += src × scale`
+
+A diferencia de `Dot`, este no está escrito a mano: llama a `TensorPrimitives.MultiplyAdd` de
+`System.Numerics.Tensors`, que es **2,5× más rápido** que el bucle `Vector<float>` al que sustituyó.
+`Dot`, en cambio, conserva su propio bucle porque `TensorPrimitives.Dot` midió **1,5× más lento**:
+arrastra una sola cadena de acumulación a través de la reducción, que es justo la dependencia serie
+que el segundo acumulador existe para romper. Misma biblioteca, respuestas opuestas, decididas
+midiendo y no por reputación — ver [`bench/README.md`](bench/README.md). **«Usa la función
+optimizada de la biblioteca» es una hipótesis, no una conclusión.**
 
 [`SimdOps.AddScaled`](src/NN/SimdOps.cs) es el caballo de batalla del `backward pass`. Fíjate
 en que, según el §8, los pasos 3 y 4 son ambos «suma un vector escalado en un acumulador» — la

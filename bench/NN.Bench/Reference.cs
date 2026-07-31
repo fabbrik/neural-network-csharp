@@ -10,6 +10,12 @@ namespace NN.Bench;
 /// is supposedly better than, so each of these is the honest version of a design the library
 /// rejected: a single accumulator chain, a delegate-dispatched activation, and NumPy's
 /// feature-major weight layout.</para>
+///
+/// <para>Some of them are not designs the library rejected but designs it <i>outgrew</i> — the
+/// hand-rolled <c>Vector&lt;float&gt;</c> kernels and the per-unit scalar activation that
+/// <see cref="SimdOps"/> and <see cref="Dense{TActivation}"/> shipped before moving to
+/// <see cref="System.Numerics.Tensors.TensorPrimitives"/>. They are kept for the same reason:
+/// the claim that the swap was worth making is only meaningful against what it replaced.</para>
 /// </summary>
 internal static class Reference
 {
@@ -35,6 +41,56 @@ internal static class Reference
             z += a[i] * b[i];
 
         return z;
+    }
+
+    /// <summary>
+    /// <c>dest += src * scale</c> hand-rolled — what <see cref="SimdOps.AddScaled"/> was before
+    /// it delegated to <c>TensorPrimitives.MultiplyAdd</c>.
+    /// </summary>
+    public static void AddScaled(Span<float> dest, ReadOnlySpan<float> src, float scale)
+    {
+        int width = Vector<float>.Count;
+        int n = dest.Length;
+        int i = 0;
+
+        var vScale = new Vector<float>(scale);
+
+        for (; i <= n - width; i += width)
+        {
+            var d = new Vector<float>(dest.Slice(i, width));
+            var s = new Vector<float>(src.Slice(i, width));
+            (d + s * vScale).CopyTo(dest.Slice(i, width));
+        }
+
+        for (; i < n; i++)
+            dest[i] += src[i] * scale;
+    }
+
+    /// <summary>
+    /// A dense layer that applies its activation one unit at a time, inside the dot-product loop —
+    /// what <see cref="Dense{TActivation}.Forward(ReadOnlySpan{float}, Span{float})"/> did before
+    /// it split into "write every pre-activation, then activate the vector". The activation is
+    /// still a generic type parameter and still inlined; the only difference is that a
+    /// transcendental is evaluated per unit rather than per vector.
+    /// </summary>
+    public sealed class ScalarActivationDense<TActivation>(int inputs, int units)
+        where TActivation : IActivation
+    {
+        public int Inputs { get; } = inputs;
+        public int Units { get; } = units;
+        public float[] Weights { get; } = new float[inputs * units];
+        public float[] Bias { get; } = new float[units];
+
+        public void Forward(ReadOnlySpan<float> aIn, Span<float> aOut)
+        {
+            ReadOnlySpan<float> w = Weights;
+
+            for (int j = 0; j < Units; j++)
+            {
+                float z = SimdOps.Dot(w.Slice(j * Inputs, Inputs), aIn) + Bias[j];
+                aOut[j] = TActivation.Apply(z);
+            }
+        }
     }
 
     /// <summary>

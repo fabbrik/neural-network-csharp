@@ -25,6 +25,10 @@ public class LayerBenchmarks
     private Dense<ReLU> _genericCheap = null!;
     private Reference.DelegateDense _delegatedCheap = null!;
 
+    // Same inlined generic activation, applied per unit instead of per layer — the shape the
+    // forward pass had before it started handing whole vectors to TensorPrimitives.Tanh.
+    private Reference.ScalarActivationDense<Tanh> _scalarActivation = null!;
+
     private float[] _input = [];
     private float[] _output = [];
 
@@ -49,6 +53,8 @@ public class LayerBenchmarks
         _genericCheap = new Dense<ReLU>(inputs, units);
         _delegatedCheap = new Reference.DelegateDense(inputs, units, z => z > 0f ? z : 0f);
 
+        _scalarActivation = new Reference.ScalarActivationDense<Tanh>(inputs, units);
+
         // Same weights everywhere, so the only variables are dispatch and memory order.
         for (int j = 0; j < units; j++)
             for (int k = 0; k < inputs; k++)
@@ -58,6 +64,7 @@ public class LayerBenchmarks
                 _delegated.Weights[j * inputs + k] = w;
                 _genericCheap.Weights[j * inputs + k] = w;
                 _delegatedCheap.Weights[j * inputs + k] = w;
+                _scalarActivation.Weights[j * inputs + k] = w;
                 _featureMajor.Weights[k * units + j] = w;
             }
 
@@ -70,6 +77,10 @@ public class LayerBenchmarks
     /// <summary>What ships: activation inlined via a generic type parameter, weights unit-major.</summary>
     [Benchmark(Baseline = true)]
     public void GenericActivation() => _generic.Forward(_input, _output);
+
+    /// <summary>Same inlined activation, but evaluated per unit rather than over the layer.</summary>
+    [Benchmark]
+    public void ScalarActivation() => _scalarActivation.Forward(_input, _output);
 
     /// <summary>Same layout, but the activation is an un-inlinable indirect call per unit.</summary>
     [Benchmark]
