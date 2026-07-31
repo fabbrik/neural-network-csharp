@@ -42,7 +42,7 @@ depende todo lo demás.
 | [`DigitPreprocessor.cs`](src/NN.Mnist/DigitPreprocessor.cs) | Lleva cualquier imagen a las convenciones de MNIST — §22 |
 | [`NN.Mnist/Program.cs`](src/NN.Mnist/Program.cs) | El reconocedor de dígitos: entrenar, evaluar, leer una imagen |
 | [`models/`](models/) | Un reconocedor entrenado, incluido para que leer dígitos funcione en un clon nuevo |
-| [`bench/`](bench/README.md) | Los benchmarks detrás de cada afirmación de velocidad de abajo |
+| [`bench/`](bench/README.es.md) | Los benchmarks detrás de cada afirmación de velocidad de abajo |
 
 ---
 
@@ -89,8 +89,8 @@ depende todo lo demás.
 > sabes que es correcta).
 >
 > **Dónde se comprueban las afirmaciones.** Cada afirmación de rendimiento de la Parte II enlaza a
-> una medición en [`bench/README.md`](bench/README.md), incluida [una que resultó ser
-> falsa](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong) y que se
+> una medición en [`bench/README.es.md`](bench/README.es.md), incluida [una que resultó ser
+> falsa](bench/README.es.md#3-activación-genérica-frente-a-delegado-la-afirmación-que-era-falsa) y que se
 > corrige en §11. Los números de esta guía provienen de un Apple M3 Pro con .NET 10; véase la nota
 > al principio de §22 sobre por qué los tuyos pueden diferir en los últimos dígitos.
 
@@ -655,7 +655,7 @@ de cada capa de cada ejemplo, y el JIT no puede integrarla dentro del bucle.
 > corrección es más instructiva que la afirmación original.** Comparada mediante un benchmark
 > con una capa que usa delegados, la versión genérica es más rápida entre un 0 y un
 > 6 % — ruido a cualquier tamaño realista
-> ([tabla completa](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong)).
+> ([tabla completa](bench/README.es.md#3-activación-genérica-frente-a-delegado-la-afirmación-que-era-falsa)).
 >
 > La razón es una proporción, no un coste de despacho. La activación se ejecuta **una vez por
 > unidad**; el producto escalar que la alimenta ejecuta `Inputs` multiplicaciones-sumas por unidad.
@@ -738,7 +738,7 @@ cuesta cientos de ciclos mientras que una multiplicación cuesta uno.
 
 Esa regla práctica es una afirmación fuerte, así que está medida. Mismos pesos, misma aritmética,
 misma activación; la única diferencia es el orden en memoria
-([detalles](bench/README.md#2-weight-layout-unit-major-vs-feature-major)):
+([detalles](bench/README.es.md#2-disposición-de-los-pesos-por-unidad-frente-a-por-característica)):
 
 | Forma de la capa | Orden por unidad (contiguo) | Orden por característica (disperso) | Coste de dispersar |
 |---|---|---|---|
@@ -945,7 +945,7 @@ escrito a mano necesita una; olvidarla descarta silenciosamente los últimos ele
 
 Ambas afirmaciones anteriores — que vectorizar compensa, y que el segundo acumulador compensa
 *otra vez* — están medidas contra un bucle escalar y contra una versión SIMD de un solo acumulador
-([detalles](bench/README.md#1-simd-and-the-second-accumulator)):
+([detalles](bench/README.es.md#1-simd-y-el-segundo-acumulador)):
 
 | Longitud | Escalar | 1 acumulador | 2 acumuladores | Ganancia SIMD | Ganancia del 2.º acumulador |
 |---|---|---|---|---|---|
@@ -985,7 +985,7 @@ A diferencia de `Dot`, este no está escrito a mano: llama a `TensorPrimitives.M
 `Dot`, en cambio, conserva su propio bucle porque `TensorPrimitives.Dot` midió **1,5× más lento**:
 arrastra una sola cadena de acumulación a través de la reducción, que es justo la dependencia serie
 que el segundo acumulador existe para romper. Misma biblioteca, respuestas opuestas, decididas
-midiendo y no por reputación — ver [`bench/README.md`](bench/README.md). **«Usa la función
+midiendo y no por reputación — ver [`bench/README.es.md`](bench/README.es.md). **«Usa la función
 optimizada de la biblioteca» es una hipótesis, no una conclusión.**
 
 [`SimdOps.AddScaled`](src/NN/SimdOps.cs) es el caballo de batalla del `backward pass`. Fíjate
@@ -1384,7 +1384,7 @@ Ten en cuenta que aquí los mini-batches son actualmente un recurso *estadístic
 Los frameworks reales agrupan en batches porque eso permite que un bloque de pesos cargado sirva a
 muchos ejemplos a la vez; esta biblioteca sigue recorriendo los pesos una vez por ejemplo en
 cualquier caso, razón por la cual
-[`ForwardBatch` no mide más rápido que un bucle](bench/README.md#4-forwardbatch--a-deliberate-null-result)
+[`ForwardBatch` no mide más rápido que un bucle](bench/README.es.md#4-forwardbatch-un-resultado-nulo-deliberado)
 (§25 punto 1).
 
 ### Épocas
@@ -1922,10 +1922,10 @@ Ordenados aproximadamente por valor. Los de «rómpelo» son los que más enseñ
     ejecuta `CacheLifetimeTests` y míralas detectarlo. La mejor demostración disponible de por qué
     «sigue entrenando» no demuestra nada.
 15. **Implementa `ForwardBatch` como un GEMM real por bloques** (§25 punto 1) y compáralo con el
-    resultado nulo existente en [`bench/`](bench/README.md). Esta es la mayor ganancia medida que
+    resultado nulo existente en [`bench/`](bench/README.es.md). Esta es la mayor ganancia medida que
     sigue sobre la mesa.
 16. **Vuelve a ejecutar los benchmarks en tu propia máquina.** Si es x86, `Vector<float>` tiene
-    ancho 8 o 16 en lugar de 4. ¿Qué conclusiones de [`bench/README.md`](bench/README.md) cambian, y
+    ancho 8 o 16 en lugar de 4. ¿Qué conclusiones de [`bench/README.es.md`](bench/README.es.md) cambian, y
     cuáles se mantienen? Las que se mantienen son en las que merece la pena confiar.
 
 ---
@@ -1944,7 +1944,7 @@ Límites honestos, ordenados por cuánto cuestan:
 
    *La mitad de esto ya está medida.* `ForwardBatch` mide **0,98× frente a un bucle manual** con
    batch sizes de 1, 32 y 256 — un resultado nulo, que confirma que hoy no aporta nada
-   ([tabla](bench/README.md#4-forwardbatch--a-deliberate-null-result)). Ese 2 % es overhead de
+   ([tabla](bench/README.es.md#4-forwardbatch-un-resultado-nulo-deliberado)). Ese 2 % es overhead de
    bucle que quien llama ya no paga, no aritmética. La *otra* mitad — que un GEMM real por bloques
    dominaría cualquier otra optimización de aquí — sigue sin medir, porque sigue sin escribirse. Ese
    es el ejercicio 15, y sigue siendo la mayor ganancia individual disponible.

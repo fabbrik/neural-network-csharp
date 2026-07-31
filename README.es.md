@@ -48,14 +48,14 @@ detecta efectivamente una derivada errónea.
 de esta documentación tiene un [benchmark](bench/) detrás. Una de ellas —que una función de
 activación implementada mediante un delegado sería significativamente más lenta que una genérica—
 resultó ser **falsa**, y
-[el informe lo dice](bench/README.md#3-generic-activation-vs-delegate--the-claim-that-was-wrong)
+[el informe lo dice](bench/README.es.md#3-activación-genérica-frente-a-delegado-la-afirmación-que-era-falsa)
 en lugar de descartarla en silencio.
 
 **Es honesta sobre sus límites.** [El §25 de la guía de estudio](STUDY-GUIDE.es.md) enumera lo que
 esta implementación no hace y lo que costaría, en orden. Empieza por admitir que un *batched GEMM*
 probablemente superaría cualquier optimización SIMD de este código, una afirmación que los
 benchmarks ahora
-[confirman parcialmente](bench/README.md#4-forwardbatch--a-deliberate-null-result).
+[confirman parcialmente](bench/README.es.md#4-forwardbatch-un-resultado-nulo-deliberado).
 
 ## Cómo ejecutarlo
 
@@ -290,7 +290,7 @@ El margen que queda es el SGD simple, sin momento ni Adam (guía de estudio §25
 
 ## Notas de diseño
 
-Cada afirmación de esta sección está medida; los números están en [`bench/`](bench/README.md).
+Cada afirmación de esta sección está medida; los números están en [`bench/`](bench/README.es.md).
 
 **Los pesos se almacenan por unidad en un único arreglo plano.** Los pesos de la unidad `j` ocupan
 `Weights[j * Inputs .. (j+1) * Inputs]`, es decir, la transpuesta de la disposición `(n, j)` de
@@ -311,7 +311,7 @@ multiplicación-suma y una cola escalar para longitudes que no son múltiplo del
 `Dot` conserva su propio bucle porque `TensorPrimitives.Dot` midió **1,5× más lento**: arrastra una
 sola cadena de acumulación a través de la reducción, que es la dependencia serie que el segundo
 acumulador existe para romper. Misma biblioteca, respuestas opuestas, decididas
-[midiendo y no por reputación](bench/README.md#why-not-just-call-tensorprimitivesdot).
+[midiendo y no por reputación](bench/README.es.md#por-qué-no-llamar-directamente-a-tensorprimitivesdot).
 
 **La activación se aplica a toda una capa a la vez, no unidad por unidad.** `exp` y `tanh` cuestan
 decenas de ciclos cada uno; vectorizados se calculan de cuatro en cuatro. **Medido: 2× en el paso de
@@ -319,7 +319,7 @@ activación, 1,3× en la capa.** Conseguirlo requirió un
 `[MethodImpl(MethodImplOptions.NoInlining)]`, sin el cual el mismo código es **6× más lento**: el
 JIT deja de eliminar las comprobaciones de límites en cuanto el bucle se inserta en línea dentro de
 un método genérico grande. Esa historia
-[merece leerse](bench/README.md#the-6-regression-this-change-caused-and-the-one-word-fix): una
+[merece leerse](bench/README.es.md#la-regresión-de-6-que-provocó-este-cambio-y-su-solución-de-una-palabra): una
 optimización local hizo seis veces más lento justo aquello que optimizaba, y solo el benchmark lo
 detectó.
 
@@ -366,7 +366,7 @@ src/NN/           la biblioteca
 src/NN.Demo/      demostración ejecutable — perceptrón, XOR, dos lunas
 src/NN.Mnist/     reconocimiento de dígitos manuscritos, con lector IDX y caché del dataset
 tests/NN.Tests/   la batería de pruebas
-bench/NN.Bench/   benchmarks, con resultados en bench/README.md
+bench/NN.Bench/   benchmarks; resultados en bench/README.md (inglés) y bench/README.es.md
 STUDY-GUIDE.md    la explicación extensa (inglés)
 STUDY-GUIDE.es.md la explicación extensa (español)
 ```

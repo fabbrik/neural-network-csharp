@@ -1,5 +1,7 @@
 # Benchmarks
 
+***English** · [Español](README.es.md)*
+
 The repo makes several performance claims. This project measures them, including the one that
 turned out to be **wrong**.
 
@@ -14,7 +16,8 @@ would measure nothing meaningful.
 ## The machine these numbers came from
 
 > Apple M3 Pro (11 cores), macOS 26.3, **.NET 10.0.10**, Arm64 RyuJIT armv8.0-a, BenchmarkDotNet
-> 0.15.8. Sections 1–3 and 5–6 use the default job; section 4 is `--job short`.
+> 0.15.8. Every section uses BenchmarkDotNet's default job — see the note under section 1 for why
+> `--job short` is not good enough to draw a conclusion from.
 
 **`Vector<float>` is 4 wide here.** On an AVX2 x86 machine it is 8 and on AVX-512 it is 16, so the
 SIMD ratios below will differ — the *shape* of every result should not. Re-run it on your own
@@ -210,12 +213,40 @@ Worth stating plainly, because it is the most useful thing in this file: **a loc
 made the thing it optimized six times slower, and only the benchmark said so.** Nothing about the
 source suggested it. Re-measure `LayerBenchmarks` before touching `MatVec`.
 
+## 7. Does any of it show up in training?
+
+Sections 1–6 measure primitives and forward passes. Training is what the library actually spends
+its time doing, and a primitive that wins 2.5× in isolation has not earned anything until it is
+weighed against everything it shares a step with. One mini-batch — forward, backward, and the
+descent update — on `784 → 128 tanh → 10 softmax`, batch size 32:
+
+| | With `TensorPrimitives` | Hand-rolled `AddScaled` | |
+|---|---|---|---|
+| **Full step** | **607.5 µs** | 815.0 µs | **1.34× faster** |
+| Forward only *(control)* | 318.9 µs | 317.9 µs | 1.00× — unchanged |
+| **Backward half** *(by subtraction)* | **288.6 µs** | 497.1 µs | **1.72× faster** |
+
+**The package earns its place: a third off every training step.** The control row is what makes
+that trustworthy. `AddScaled` appears nowhere in the forward pass, so if the two forward numbers
+had diverged, something other than the intended change would have moved and the whole comparison
+would be suspect. They differ by 0.3%, inside the noise, which places the entire 207 µs difference
+in the backward pass — exactly where the primitive lives.
+
+**Backprop is where this library spends its time, and section 5 undersold it.** The backward half
+is 48% of the step here, and it runs `AddScaled` twice per unit against `Dot`'s once, so the
+primitive is a larger share of training than any forward-pass benchmark can show. That is why a
+2.5× on a microbenchmark became 1.72× on the pass and 1.34× on the whole step, rather than the
+rounding error a forward-only view would have predicted.
+
+It also settles a question sections 1–6 could not: dropping the dependency to keep the library
+package-free would cost a third of its training throughput.
+
 ## What is not measured here
 
-- **Training throughput** end to end (forward + backward + update), as opposed to a single forward pass.
-- **The backward pass** as a whole, though its `AddScaled` is now measured in isolation (section 5).
 - **Anything multi-threaded** — the library is single-threaded throughout.
 - **Batched GEMM**, the one remaining large win — see section 4 and study guide §25.
+- **Whole-epoch or whole-run timing**, including data loading and shuffling. Section 7 measures one
+  mini-batch in isolation; the MNIST demo's end-to-end 37 s is reported in the README, not here.
 
 CI builds this project on every push so it cannot rot, but does not run it: benchmark timings from
 shared cloud runners are not worth the minutes they cost.
